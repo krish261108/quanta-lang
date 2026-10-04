@@ -146,3 +146,13 @@ def test_mark_conflict_tool(ctx):
     r = reg.execute("mark_conflict", {"claim_a": a.id, "claim_b": b.id, "note": "different units?"}, ctx)
     assert not r.is_error and len(ctx.ledger.unresolved_conflicts()) == 1
     assert reg.execute("mark_conflict", {"claim_a": a.id, "claim_b": "C999"}, ctx).is_error
+
+
+@pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_perceive_video_extracts_frames(ctx, tmp_path):
+    import subprocess
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=5",
+                    str(tmp_path / "clip.mp4")], check=True, timeout=60)
+    r = default_registry().execute("perceive_file", {"path": "clip.mp4"}, ctx)
+    images = [b for b in r.content if b.get("type") == "image"]
+    assert images and "Audio track NOT perceived" in r.text()

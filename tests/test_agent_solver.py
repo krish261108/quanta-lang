@@ -219,3 +219,40 @@ def test_large_task_is_decomposed_hierarchically(tmp_path):
     status = {t["id"]: t["status"] for t in tasks}
     assert status == {"t1": "refined", "t1.a": "done", "t1.b": "done"}
     assert loop.state.done and loop.state.result["answer"] == "x = 4"
+
+
+def test_resume_keeps_the_runs_genome(tmp_path):
+    run_dir = tmp_path / "run"
+    g = Genome(min_hypotheses=2, delegate=False, research_depth=0)
+    ResearchLoop("q", model=ScriptedModel(research_brain), run_dir=run_dir, genome=g)._checkpoint()
+    resumed = ResearchLoop.resume(run_dir, model=ScriptedModel(research_brain))
+    assert resumed.genome == g
+
+
+def test_anthropic_request_shape():
+    from types import SimpleNamespace
+    from quanta.llm import AnthropicModel
+
+    sent = []
+
+    class FakeMessages:
+        def create(self, **params):
+            sent.append(params)
+            block = SimpleNamespace(type="text", text="hi")
+            usage = SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=0,
+                                    cache_creation_input_tokens=0)
+            stop = "pause_turn" if len(sent) == 1 else "end_turn"
+            return SimpleNamespace(content=[block], stop_reason=stop, usage=usage, model="claude-opus-5-5",
+                                   stop_details=None)
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages()))
+    m = AnthropicModel(client=client, web_search=False, web_fetch=False)
+    r = m.respond(system="s", messages=[{"role": "user", "content": "q"}], tools=[], effort="low")
+    first = sent[0]
+    assert first["model"] == "claude-opus-5-5" and first["thinking"] == {"type": "adaptive"}
+    assert first["output_config"] == {"effort": "low"} and "tools" not in first
+    assert first["fallbacks"] == "default" and first["betas"] == ["server-side-fallback-2026-07-01"]
+    assert "budget_tokens" not in str(first) and "tool_choice" not in first
+    # pause_turn: the partial assistant turn is appended and the request resent
+    assert sent[1]["messages"][-1]["role"] == "assistant"
+    assert r.text == "hihi" and r.usage.input_tokens == 20 and r.cost_usd > 0

@@ -94,7 +94,11 @@ class ResearchLoop:
             self.state = RunState(run_id=f"run-{uuid.uuid4().hex[:8]}", problem=problem)
         ledger_path = self.run_dir / "ledger.json"
         self.ledger = Ledger.load(ledger_path) if ledger_path.exists() else Ledger()
+        genome_path = self.run_dir / "genome.json"
+        if genome is None and genome_path.exists():
+            genome = Genome.load(genome_path)        # a resumed run keeps its strategy
         self.genome = genome or Genome()
+        self.genome.save(genome_path)
         self.governor = governor or Governor(
             budget=Budget(max_steps=400, max_cost_usd=25.0),
             audit=AuditLog(self.run_dir / "audit.jsonl"), kill_switch=KillSwitch(self.run_dir / "STOP"))

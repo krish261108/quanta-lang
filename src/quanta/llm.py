@@ -140,11 +140,12 @@ class AnthropicModel:
             "max_tokens": max_tokens or self.max_tokens,
             # Stable prefix first (tools -> system), cached; the tail is auto-cached.
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "tools": [*tools, *self.server_tools],
             "thinking": {"type": "adaptive"},
             "output_config": {"effort": effort or self.effort},
             "cache_control": {"type": "ephemeral"},
         }
+        if tools or self.server_tools:
+            params["tools"] = [*tools, *self.server_tools]
         if self.fallbacks:
             params["betas"] = ["server-side-fallback-2026-07-01"]
             params["fallbacks"] = "default"
