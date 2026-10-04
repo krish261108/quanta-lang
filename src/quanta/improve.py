@@ -40,7 +40,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 from .bench.harness import SuiteResult, diagnose, run_suite
 from .epistemics import Ledger, Status
@@ -576,9 +576,10 @@ class SelfImprover:
                              f"selection split (delta {a['selection_delta']:+.4f}) and replicated on fresh tasks "
                              f"(delta {a['confirmation_delta']:+.4f}). Rationale: {a['rationale']}",
                              Status.INFERENCE, 0.9, depends_on=[f1.id], author="analysis")
-        led.assert_claim("The same strategy changes (adversarial falsification, robust likelihoods, a flexible "
-                         "'none of the above' baseline, calibrated credence) would improve LLM-driven open-ended "
-                         "research. Not tested here.", Status.SPECULATION, 0.4, author="analysis")
+        if r.adopted:
+            names = ", ".join(sorted({k for a in r.adopted for k in a["changes"]}))
+            led.assert_claim(f"The adopted strategy changes ({names}) would also improve LLM-driven open-ended "
+                             "research. Not tested here.", Status.SPECULATION, 0.4, author="analysis")
         rejected = sum(1 for e in r.lineage if e["event"] == "evaluated" and not e["selection_gate"]["accept"])
         failed_conf = sum(1 for e in r.lineage if e["event"] == "confirmation" and not e["confirmation_gate"]["accept"])
         lines = [f"- v{a['version']} (generation {a['generation']}): `{a['changes']}` — {a['rationale']} "

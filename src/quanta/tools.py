@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from .epistemics import Ledger, LedgerError, Status
+from .epistemics import Ledger, LedgerError
 from .governance import Action, Governor, Risk
 from .memory import MemoryStore
 from .perception import observe_environment, perceive
