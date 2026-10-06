@@ -44,6 +44,12 @@ SPACE: dict[str, ParamSpec] = {
     "use_learned_priors": ParamSpec("bool", doc="priors from verified past outcomes in memory"),
     "prior_pseudocount": ParamSpec("float", 0.1, 20.0, doc="Dirichlet smoothing for learned priors"),
     "ask_below": ParamSpec("float", 0.0, 0.95, doc="request human input below this credence"),
+    "freq_penalty": ParamSpec("bool", doc="look-elsewhere correction for frequency-searched families"),
+    "construct": ParamSpec("bool", doc="construct new hypotheses by program synthesis when named laws fail"),
+    "construct_max_size": ParamSpec("int", 1, 4, doc="largest program (operator count) construction searches"),
+    "construct_holdout": ParamSpec("int", 0, 15, doc="fresh measurements required after constructing a law"),
+    "pool_equivalent": ParamSpec("bool", doc="stop and report credence on the posterior mass of hypotheses "
+                                             "whose predictions agree with the leader's"),
     # --- LLM research-loop strategy ----------------------------------------
     "min_hypotheses": ParamSpec("int", 1, 8, doc="competing hypotheses required before planning"),
     "research_depth": ParamSpec("int", 0, 3, doc="0 skips literature/documentation research"),
@@ -59,6 +65,10 @@ SPACE: dict[str, ParamSpec] = {
 
 class GenomeError(ValueError):
     pass
+
+
+LATER_DEFAULTS = {"freq_penalty": False, "construct": False, "construct_max_size": 3, "construct_holdout": 6,
+                  "pool_equivalent": False}
 
 
 @dataclass(frozen=True)
@@ -79,6 +89,11 @@ class Genome:
     use_learned_priors: bool = False
     prior_pseudocount: float = 2.0
     ask_below: float = 0.5
+    freq_penalty: bool = False
+    construct: bool = False
+    construct_max_size: int = 3
+    construct_holdout: int = 6
+    pool_equivalent: bool = False
     min_hypotheses: int = 3
     research_depth: int = 1
     verification: str = "independent"
@@ -138,7 +153,10 @@ class Genome:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
     def fingerprint(self) -> str:
-        canonical = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        # Fields added after the first recorded experiments are left out while at
+        # their defaults, so earlier fingerprints stay valid.
+        d = {k: v for k, v in self.to_dict().items() if not (k in LATER_DEFAULTS and v == LATER_DEFAULTS[k])}
+        canonical = json.dumps(d, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
     # -- variation ---------------------------------------------------------

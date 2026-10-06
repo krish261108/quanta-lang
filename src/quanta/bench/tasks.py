@@ -20,8 +20,7 @@ import random
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ..science.hypotheses import (CORE_FAMILIES, DOMAIN, EXTENDED_FAMILIES, FAMILIES, FLEXIBLE,
-                                  FamilyHypothesis)
+from .frozen import CORE_FAMILIES, DOMAIN, EXTENDED_FAMILIES, FAMILIES, FLEXIBLE, family_rss
 
 # Real research rarely draws laws uniformly: simple relations are common.
 TRUTH_WEIGHTS: dict[str, float] = {
@@ -138,21 +137,32 @@ class DiscoveryTask:
 
 
 class SimulatedInstrument:
-    """A noisy measuring device. Inputs outside the domain are clipped."""
+    """A noisy measuring device. Inputs outside the domain are clipped.
+
+    The task (ground truth) is held in a closure, not an attribute, so a solver
+    handed this object in-process cannot read it by attribute access. That is not a
+    security boundary (Python code can still introspect); code that is not trusted
+    must be evaluated through `quanta.bench.isolation`, where the solver runs in a
+    separate process and only ever receives measurements.
+    """
 
     def __init__(self, task: DiscoveryTask) -> None:
-        self.task = task
         self.domain = DOMAIN
-        self.rng = random.Random(task.seed * 7919 + 17)
         self.calls = 0
+        rng = random.Random(task.seed * 7919 + 17)
+
+        def _measure(x: float) -> float:
+            x = min(DOMAIN[1], max(DOMAIN[0], x))
+            y = task.truth(x) + rng.gauss(0.0, task.noise_sd)
+            if task.outlier_rate and rng.random() < task.outlier_rate:
+                y += _sign(rng) * rng.uniform(0.5, 1.5) * task.truth_sd
+            return y
+
+        self._measure = _measure
 
     def measure(self, x: float) -> float:
         self.calls += 1
-        x = min(self.domain[1], max(self.domain[0], x))
-        y = self.task.truth(x) + self.rng.gauss(0.0, self.task.noise_sd)
-        if self.task.outlier_rate and self.rng.random() < self.task.outlier_rate:
-            y += _sign(self.rng) * self.rng.uniform(0.5, 1.5) * self.task.truth_sd
-        return y
+        return self._measure(x)
 
 
 def closest_rival_nrmse(family: str, params: tuple[float, ...]) -> float:
@@ -167,8 +177,7 @@ def closest_rival_nrmse(family: str, params: tuple[float, ...]) -> float:
     for name in LIBRARY:
         if name == family or FAMILIES[name].n_params > k_truth:
             continue
-        fit = FamilyHypothesis(name).fit(list(_ID_GRID), ys)
-        best = min(best, math.sqrt(fit.rss / len(ys)) / sd)
+        best = min(best, math.sqrt(family_rss(name, list(_ID_GRID), ys) / len(ys)) / sd)
     return best
 
 

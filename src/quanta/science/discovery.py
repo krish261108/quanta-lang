@@ -35,6 +35,10 @@ from ..genome import Genome
 from ..uncertainty import DiminishingReturns
 from .hypotheses import (CORE_FAMILIES, EXTENDED_FAMILIES, FLEXIBLE, Fit, FitError,
                          make_hypotheses)
+from .synth import FREQ_TRIALS, SynthHypothesis, synthesize
+
+# Named families whose fit searches a frequency grid (look-elsewhere effect).
+FREQ_FAMILIES = ("sinusoid", "linear_sin")
 
 
 class ExperimentalSystem(Protocol):
@@ -65,6 +69,9 @@ class DiscoveryResult:
     ledger: Ledger
     human_request: str | None = None
     hypotheses_considered: list[str] = field(default_factory=list)
+    constructed: list[str] = field(default_factory=list)
+    inadequacy_detected: bool = False
+    answer_kind: str = "named"          # named | capability | constructed | none
 
     @property
     def n_experiments(self) -> int:
@@ -104,13 +111,24 @@ class DiscoveryLoop:
         prior_counts: Counter | dict | None = None,
         ledger: Ledger | None = None,
         extra_hypotheses: Sequence = (),
+        library: Sequence = (),
+        predict_x: Sequence[float] | None = None,
+        separate_streams: bool = False,
     ) -> None:
         self.g = genome
         self.budget = budget
         self.rng = random.Random(seed)
+        # Common random numbers: with separate streams, the design draws do not depend on
+        # how many candidate sets falsification or construction consumed, so two solver
+        # configurations on the same task measure at the same random inputs. The default
+        # (one shared stream) reproduces earlier recorded results exactly.
+        self.rng_aux = random.Random(seed ^ 0x5F3759DF) if separate_streams else self.rng
         self.prior_counts = Counter(prior_counts or {})
         self.ledger = ledger or Ledger()
         self.extra = list(extra_hypotheses)
+        self.library = list(library)       # learned abstractions usable as building blocks
+        self.predict_x = list(predict_x) if predict_x else None   # where predictions will be asked for
+        self._offset: dict[str, float] = {}
 
     # -- priors ------------------------------------------------------------
     def _log_prior(self, names: Sequence[str]) -> dict[str, float]:
@@ -119,7 +137,16 @@ class DiscoveryLoop:
         else:
             w = {n: 1.0 for n in names}
         total = sum(w.values())
-        return {n: math.log(w[n] / total) for n in names}
+        # Structure costs: constructed programs pay for the size of the space searched,
+        # and (with freq_penalty) frequency-searched families pay a look-elsewhere charge.
+        return {n: math.log(w[n] / total) + self._offset.get(n, 0.0) for n in names}
+
+    def _register(self, h) -> None:
+        offset = getattr(h, "log_prior_offset", 0.0)
+        if self.g.freq_penalty and h.name in FREQ_FAMILIES:
+            offset -= math.log(FREQ_TRIALS)
+        if offset:
+            self._offset[h.name] = offset
 
     # -- analysis ------------------------------------------------------------
     def _evaluate(self, hyps: dict, obs: list[Observation], full: bool):
@@ -135,10 +162,49 @@ class DiscoveryLoop:
         post = posterior_from_fits(fits, self._log_prior(list(fits)), self.g.temperature)
         return fits, post
 
+    POOL_TOL = 0.5    # predictions "agree" if their RMS difference is below half the noise level
+
+    def _support(self, leader: str, fits: dict, post: dict, obs: list[Observation], lo: float,
+                 hi: float) -> float:
+        """Credence that the leader's *predictions* are right: the posterior mass of all
+        hypotheses whose predictions at the requested points agree with the leader's
+        (within POOL_TOL of the leader's robust noise scale). Without pooling this is
+        just the leader's posterior."""
+        if not self.g.pool_equivalent:
+            return post[leader]
+        lf = fits[leader]
+        res = sorted(abs(o.y - lf.predict(o.x)) for o in obs)
+        res = [r for r in res if math.isfinite(r)]
+        if not res:
+            return post[leader]
+        sigma = 1.4826 * res[len(res) // 2]
+        if sigma <= 0:
+            return post[leader]
+        grid = self.predict_x or [lo + (hi - lo) * i / 24 for i in range(25)]
+        ref = [lf.predict(x) for x in grid]
+        mass = 0.0
+        for name, p in post.items():
+            if name == leader:
+                mass += p
+                continue
+            if p < 1e-6:
+                continue
+            se, ok = 0.0, True
+            for x, r in zip(grid, ref):
+                v = fits[name].predict(x)
+                if not (math.isfinite(v) and math.isfinite(r)):
+                    ok = False
+                    break
+                se += (v - r) ** 2
+            if ok and math.sqrt(se / len(grid)) <= self.POOL_TOL * sigma:
+                mass += p
+        return min(1.0, mass)
+
     # -- experiment design ----------------------------------------------------
-    def _space_filling(self, obs, lo, hi) -> float:
+    def _space_filling(self, obs, lo, hi, rng: random.Random | None = None) -> float:
         xs = [o.x for o in obs]
-        cands = [self.rng.uniform(lo, hi) for _ in range(self.g.n_candidates)] + [lo, hi]
+        rng = rng or self.rng
+        cands = [rng.uniform(lo, hi) for _ in range(self.g.n_candidates)] + [lo, hi]
         return max(cands, key=lambda c: min((abs(c - x) for x in xs), default=1.0))
 
     def _next_x(self, fits, post, obs, lo, hi) -> tuple[float, str]:
@@ -173,8 +239,8 @@ class DiscoveryLoop:
         rivals = [(n, p) for n, p in post.items() if n != leader and p > 0]
         total = sum(p for _, p in rivals)
         if not rivals or total <= 0:
-            return self._space_filling(obs, lo, hi)
-        cands = [self.rng.uniform(lo, hi) for _ in range(self.g.n_candidates)] + [lo, hi]
+            return self._space_filling(obs, lo, hi, self.rng_aux)
+        cands = [self.rng_aux.uniform(lo, hi) for _ in range(self.g.n_candidates)] + [lo, hi]
         lf = fits[leader]
 
         def score(c):
@@ -196,6 +262,8 @@ class DiscoveryLoop:
         hyps = {h.name: h for h in make_hypotheses(names)}
         for h in self.extra:
             hyps[h.name] = h
+        for h in hyps.values():
+            self._register(h)
 
         # FRAME: unknowns and competing hypotheses, recorded as speculation.
         led.assert_claim("Unknowns: the generating law, its parameters, the noise level, "
@@ -226,6 +294,8 @@ class DiscoveryLoop:
         falsifications: list[dict] = []
         pending: tuple[str, float] | None = None
         expanded = False
+        constructions, next_construct_n, constructed, last_construct_n = 0, 0, [], -1
+        inadequacy = False
         stall = DiminishingReturns(patience=g.patience, min_delta=0.005) if g.patience else None
         trace: list[dict] = []
         stop_reason = "budget exhausted"
@@ -233,7 +303,9 @@ class DiscoveryLoop:
         while True:
             fits, post = self._evaluate(hyps, obs, full=(len(obs) % 5 == 0 or len(trace) == 0))
             leader = next(iter(post))
+            support = self._support(leader, fits, post, obs, lo, hi)
             trace.append({"n": len(obs), "leader": leader, "p": round(post[leader], 4),
+                          "support": round(support, 4),
                           "entropy": round(entropy(post), 4),
                           "top": [(k, round(v, 4)) for k, v in list(post.items())[:3]],
                           "last": obs[-1].purpose})
@@ -249,11 +321,14 @@ class DiscoveryLoop:
                 pending = None
 
             # REVISE: named laws inadequate -> widen the hypothesis space once.
+            if leader == FLEXIBLE and post[leader] >= 0.5 and len(obs) >= g.min_experiments:
+                inadequacy = True
             if (g.expand_on_inadequacy and not expanded and leader == FLEXIBLE
                     and post[leader] >= 0.5 and len(obs) >= g.min_experiments):
                 expanded = True
                 for h in make_hypotheses(EXTENDED_FAMILIES):
                     hyps[h.name] = h
+                    self._register(h)
                     hyp_claims[h.name] = led.assert_claim(
                         f"The system follows the '{h.name}' law.", Status.SPECULATION, 0.5,
                         author="revise").id
@@ -264,11 +339,32 @@ class DiscoveryLoop:
                                  evidence=[ev.id], author="revise")
                 continue
 
+            # CONSTRUCT: no available law explains the data -> build candidate laws.
+            if (g.construct and constructions < 2 and leader == FLEXIBLE and post[leader] >= 0.5
+                    and len(obs) >= max(g.min_experiments, next_construct_n)):
+                constructions += 1
+                next_construct_n = len(obs) + 8
+                last_construct_n = len(obs)
+                added = self._construct(obs, hyps)
+                if added:
+                    ev = led.add_evidence("derivation", f"program synthesis proposed {len(added)} new laws",
+                                          {"programs": [h.name for h in added]})
+                    for h in added:
+                        hyps[h.name] = h
+                        self._register(h)
+                        constructed.append(h.name)
+                        hyp_claims[h.name] = led.assert_claim(
+                            f"The system follows the constructed law {h.name}.", Status.SPECULATION, 0.1,
+                            evidence=[ev.id], author="construct").id
+                    continue
+
             n = len(obs)
             if n >= self.budget:
                 stop_reason = "budget exhausted"
                 break
-            if post[leader] >= g.stop_posterior and n >= g.min_experiments:
+            # A law constructed from the data must also survive fresh data before it is accepted.
+            fresh_ok = last_construct_n < 0 or n >= last_construct_n + g.construct_holdout
+            if support >= g.stop_posterior and n >= g.min_experiments and fresh_ok:
                 if falsify_left > 0:
                     falsify_left -= 1
                     x = self._falsification_x(leader, fits, post, obs, lo, hi)
@@ -277,15 +373,20 @@ class DiscoveryLoop:
                     continue
                 stop_reason = "confident and survived falsification" if falsifications else "confident"
                 break
-            if stall is not None and stall.update(post[leader]) and n >= g.min_experiments:
+            if stall is not None and stall.update(support) and n >= g.min_experiments:
                 stop_reason = "diminishing returns"
                 break
             x, purpose = self._next_x(fits, post, obs, lo, hi)
             measure(x, purpose)
 
         leader = next(iter(post))
-        credence = post[leader]
+        credence = self._support(leader, fits, post, obs, lo, hi)
         best = fits[leader]
+        lh = hyps.get(leader)
+        if leader == FLEXIBLE:
+            kind = "none"
+        else:
+            kind = getattr(lh, "origin", "named")
         for name, cid in hyp_claims.items():
             if name in post:
                 led.update_confidence(cid, post[name], "posterior after experiments")
@@ -313,4 +414,25 @@ class DiscoveryLoop:
             answer=leader, credence=credence, posterior=post, best_fit=best, observations=obs,
             falsifications=falsifications, expanded=expanded, stop_reason=stop_reason, trace=trace,
             ledger=led, human_request=human_request, hypotheses_considered=list(hyps),
+            constructed=constructed, inadequacy_detected=inadequacy, answer_kind=kind,
         )
+
+    def _construct(self, obs: list[Observation], hyps: dict) -> list:
+        """Search the program space for laws that explain the observations; return the
+        best few as new competing hypotheses (each carrying its structure cost)."""
+        xs = [o.x for o in obs]
+        ys = [o.y for o in obs]
+        cands = synthesize(xs, ys, library=self.library, max_size=self.g.construct_max_size,
+                           robust=self.g.likelihood == "student_t", nu=self.g.t_dof,
+                           seed=self.rng_aux.randrange(1 << 30), top_k=4)
+        out = []
+        for c in cands:
+            if c.model.size == 0:          # c + c*x duplicates the named linear law
+                continue
+            h = SynthHypothesis(c.model, init=c.fit.params,
+                                log_prior_offset=c.model.log_prior(len(self.library)))
+            if h.name not in hyps:
+                out.append(h)
+            if len(out) == 3:
+                break
+        return out
