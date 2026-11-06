@@ -68,6 +68,8 @@ ORACLE = {
 }
 PRIMARY = "C2_S0_acquired"
 BASE = "C0_S0"
+# v2 hands the loop a proposer-only view of the evaluation service (v1: the service itself).
+PROPOSER_VIEW = False
 
 
 def cfg(genome: Genome, caps: list[dict]) -> dict:
@@ -148,7 +150,8 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
     registry = Registry(d / "registry.jsonl")
     memory = MemoryStore(str(d / "memory.db"))
     cls = RandomAcquisitionLoop if control else AcquisitionLoop
-    loop = cls(service, reviewer, registry, cfg(S0, []), log_path=d / "events.jsonl", memory=memory,
+    proposer = service.proposer_view() if PROPOSER_VIEW else service
+    loop = cls(proposer, reviewer, registry, cfg(S0, []), log_path=d / "events.jsonl", memory=memory,
                settings=SETTINGS, seed=SEED + 1000 * rep + (7 if control else 0), run_id=f"{name}-rep{rep}")
     t0 = time.time()
     report = loop.run()
@@ -166,7 +169,8 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
                     "heldout": r.heldout_evidence, "transfer": r.transfer_evidence, "retry": r.retry_evidence}
                    for r in registry.by_status("ACTIVE")],
         "registry": [asdict(r) for r in registry.records.values()],
-        "proposer_seen_seeds": len(service.seen_seeds), "memory": mem,
+        "proposer_seen_seeds": len(service.seen_seeds), "unreviewed_seeds": len(getattr(service, "unreviewed_seeds", ())),
+        "memory": mem,
         "replay_check": replay_check(d, sorted(d.parent.glob(f"{name}.interrupted-*"))),
     }
     dump_json(summary_path, summary)
