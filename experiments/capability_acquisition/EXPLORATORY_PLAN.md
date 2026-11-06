@@ -28,3 +28,17 @@ protocol requires.
   cost components, and count answer changes.
 
 Nothing in X1–X3 feeds back into the acquisition loop, the registry or the reviewer.
+
+## Amendment (2026-11-06, during the acquisition phases, before any report-only split was evaluated)
+
+Development analysis on the dev split (no held-out data) found that (a) the familiar-task
+cost of a capability is posterior dilution in the base solver (tasks whose answer does not
+change take ~0.45 more measurements and lose credence), and (b) with small-sample model
+evidence (`evidence="gprior"`, developed on a separate branch), S0 plus the three acquired
+structures scored +0.007 on familiar tasks and +0.07 overall on 400 dev tasks.
+
+* **X4. Corrected base solver.** After both replications' registered phases have finished
+  and the development branch is merged, evaluate S0' = S0 + `evidence="gprior"` alone and
+  S0' + all X1 candidates on every report-only split, paired against C0 and against S0 + all
+  X1 candidates. Exploratory: the confirmatory test of this idea is a separate, newly
+  pre-registered experiment on fresh seeds.
