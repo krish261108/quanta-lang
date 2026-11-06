@@ -97,6 +97,44 @@ def posterior_from_fits(fits: dict[str, Fit], log_prior: dict[str, float],
     return {k: v / total for k, v in sorted(z.items(), key=lambda kv: -kv[1])}
 
 
+CLIP_SD = 3.0      # robust evidence: residuals beyond 3 robust sds count as 3 sds
+
+
+def _clipped_ss(res: Sequence[float]) -> float:
+    """Sum of squares with residuals winsorized at CLIP_SD robust standard deviations."""
+    a = sorted(abs(r) for r in res)
+    mad = a[len(a) // 2] if a else 0.0
+    cap = (CLIP_SD * 1.4826 * mad) ** 2
+    return sum(min(r * r, cap) if cap > 0 else r * r for r in res)
+
+
+def gprior_log_evidence(ss_model: float, ss_null: float, n: int, p: int, g: float | None = None) -> float:
+    """log Bayes factor of a model with p regressors (beyond the intercept) against the
+    intercept-only model, under Zellner's g-prior with g = n and a Jeffreys prior on the
+    noise scale (Liang et al. 2008, eq. 5). Exact for linear Gaussian models at any n;
+    nonlinear parameters, which are optimized, are counted as regressors. Unlike BIC
+    with a plug-in noise scale, it does not reward a model for fitting the few remaining
+    degrees of freedom unusually well, which is what makes high-capacity models win by
+    chance at small n."""
+    if n - p - 1 < 1:
+        return -math.inf                   # not assessable on this little data
+    if ss_null <= 0:
+        return 0.0
+    g = float(n) if g is None else g
+    r = max(ss_model / ss_null, 1e-12)     # 1 - R^2
+    return 0.5 * (n - p - 1) * math.log1p(g) - 0.5 * (n - 1) * math.log1p(g * r)
+
+
+def posterior_from_evidence(scores: dict[str, float], temperature: float = 1.0) -> dict[str, float]:
+    finite = {k: v / temperature for k, v in scores.items() if math.isfinite(v)}
+    if not finite:
+        raise FitError("no hypothesis could be assessed")
+    m = max(finite.values())
+    z = {k: math.exp(v - m) for k, v in finite.items()}
+    total = sum(z.values())
+    return {k: v / total for k, v in sorted(z.items(), key=lambda kv: -kv[1])}
+
+
 def entropy(p: dict[str, float]) -> float:
     return -sum(v * math.log(v) for v in p.values() if v > 0)
 
@@ -159,8 +197,27 @@ class DiscoveryLoop:
                 fits[name] = h.fit(xs, ys, robust=robust, nu=self.g.t_dof, warm=not full)
             except (FitError, OverflowError, ValueError, ZeroDivisionError):
                 continue
-        post = posterior_from_fits(fits, self._log_prior(list(fits)), self.g.temperature)
+        if self.g.evidence == "gprior":
+            post = self._gprior_posterior(fits, xs, ys, robust)
+        else:
+            post = posterior_from_fits(fits, self._log_prior(list(fits)), self.g.temperature)
         return fits, post
+
+    def _gprior_posterior(self, fits: dict, xs, ys, robust: bool) -> dict[str, float]:
+        n = len(ys)
+        med = sorted(ys)[n // 2]
+        mean = sum(ys) / n
+        null_res = [y - (med if robust else mean) for y in ys]
+        ss_null = _clipped_ss(null_res) if robust else sum(r * r for r in null_res)
+        prior = self._log_prior(list(fits))
+        scores = {}
+        for name, f in fits.items():
+            res = [y - f.predict(x) for x, y in zip(xs, ys)]
+            if not all(math.isfinite(r) for r in res):
+                continue
+            ss = _clipped_ss(res) if robust else sum(r * r for r in res)
+            scores[name] = prior[name] + gprior_log_evidence(ss, ss_null, n, f.n_params - 1)
+        return posterior_from_evidence(scores, self.g.temperature)
 
     POOL_TOL = 0.5    # predictions "agree" if their RMS difference is below half the noise level
 
