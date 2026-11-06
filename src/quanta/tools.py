@@ -14,6 +14,7 @@ import fnmatch
 import hashlib
 import html
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -78,10 +79,14 @@ class ToolContext:
     depth: int = 0
     extras: dict[str, Any] = field(default_factory=dict)
     fetched: dict[str, str] = field(default_factory=dict)   # url -> text, for citation checks
+    # Run agent-executed shell/Python as this unprivileged OS user (requires the harness to
+    # run as root). Files the harness keeps outside the workspace (state, ledger, audit log,
+    # STOP) then cannot be modified by agent code: an OS boundary, not an in-process guard.
+    sandbox_user: str | None = None
 
     def child(self, agent: str, governor: Governor) -> "ToolContext":
         return ToolContext(self.workspace, governor, self.ledger, self.memory, self.run_id, agent,
-                           self.human, self.depth + 1, self.extras, self.fetched)
+                           self.human, self.depth + 1, self.extras, self.fetched, self.sandbox_user)
 
     def resolve(self, path: str) -> Path:
         """Resolve a path and refuse anything outside the workspace."""
@@ -323,10 +328,28 @@ def _search_files(args, ctx):
     return "\n".join(hits) or "no matches"
 
 
+def _sandbox_kwargs(ctx) -> dict:
+    """subprocess arguments that drop to the sandbox user; fails closed."""
+    if not ctx.sandbox_user:
+        return {}
+    import pwd
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        raise PermissionError("a sandbox user was configured but the harness is not running as root, so it "
+                              "cannot switch users; refusing to run unsandboxed")
+    pw = pwd.getpwnam(ctx.sandbox_user)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(ctx.workspace),
+           "LANG": os.environ.get("LANG", "C.UTF-8"), "PYTHONDONTWRITEBYTECODE": "1"}
+    return {"user": pw.pw_uid, "group": pw.pw_gid, "extra_groups": [], "env": env}
+
+
 def _run_subprocess(cmd, ctx, timeout, shell=False) -> ToolResult:
     try:
+        sandbox = _sandbox_kwargs(ctx)
+    except (PermissionError, KeyError) as e:
+        return ToolResult(f"sandbox error: {e}", is_error=True, data={"exit_code": -1})
+    try:
         r = subprocess.run(cmd, cwd=ctx.workspace, capture_output=True, text=True,
-                           timeout=timeout, shell=shell)
+                           timeout=timeout, shell=shell, **sandbox)
         out = _truncate(f"exit_code={r.returncode}\n--- stdout ---\n{r.stdout}\n--- stderr ---\n{r.stderr}")
         return ToolResult(out, is_error=r.returncode != 0, data={"exit_code": r.returncode})
     except subprocess.TimeoutExpired:

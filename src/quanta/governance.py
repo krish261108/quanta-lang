@@ -45,6 +45,8 @@ def shell_prefix_rule(prefix: str, max_risk: Risk = Risk.HIGH) -> "AllowRule":
     no shell control syntax, so `pytest` does not also allow `pytest && git push`."""
     control = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
 
+    prefix = prefix.strip()
+
     def match(args: dict, p: str = prefix) -> bool:
         cmd = str(args.get("command", "")).strip()
         if control.search(cmd):
@@ -298,6 +300,10 @@ class AuditLog:
         """Is the file on disk exactly what this process has written to it?"""
         if self.path is None:
             return True
+        with self._lock:                    # never compare against a half-finished append
+            return self._intact_locked()
+
+    def _intact_locked(self) -> bool:
         if not self.path.exists():
             return self._size == 0          # nothing written yet is fine; a deleted log is not
         try:

@@ -106,7 +106,13 @@ def write_jsonl(path: Path, recs: list[dict]) -> None:
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    """Per-task records; falls back to the committed gzip copy (see pack_results.py)."""
+    if not path.exists() and path.with_name(path.name + ".gz").exists():
+        import gzip
+        text = gzip.decompress(path.with_name(path.name + ".gz").read_bytes()).decode("utf-8")
+    else:
+        text = path.read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def log(msg: str) -> None:
@@ -123,12 +129,20 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
     summary_path = d / "summary.json"
     if summary_path.exists():
         return json.loads(summary_path.read_text())
+    stale = None
     if (d / "events.jsonl").exists():
-        # A loop cannot be resumed mid-round without re-using held-out blocks; start over cleanly.
+        # A loop cannot be resumed mid-round. Every step is deterministic, so the run is
+        # replayed from the start; complete evaluation records of the interrupted attempt are
+        # reused (bench/review.py checks they cover exactly the same tasks), and the replay's
+        # decisions are compared with the interrupted attempt's afterwards.
         stale = d.with_name(f"{name}.interrupted-{int(time.time())}")
         d.rename(stale)
-        log(f"{name}: previous attempt was interrupted; kept it at {stale.name} and restarting")
+        log(f"{name}: previous attempt was interrupted; kept it at {stale.name} and replaying")
     d.mkdir(parents=True, exist_ok=True)
+    if stale is not None and (stale / "evals").exists():
+        import shutil
+        shutil.copytree(stale / "evals", d / "evals", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("train-*", "*-rerun.jsonl"))
     service = EvaluationService(d / "evals", replication=rep, workers=workers)
     reviewer = Reviewer(service, d / "reviewer", workers=workers, first_block=FIRST_BLOCK[name])
     registry = Registry(d / "registry.jsonl")
@@ -153,9 +167,33 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
                    for r in registry.by_status("ACTIVE")],
         "registry": [asdict(r) for r in registry.records.values()],
         "proposer_seen_seeds": len(service.seen_seeds), "memory": mem,
+        "replay_check": replay_check(d, sorted(d.parent.glob(f"{name}.interrupted-*"))),
     }
     dump_json(summary_path, summary)
     return summary
+
+
+def _decisions(events_path: Path) -> list[tuple]:
+    keep = ("design", "implement", "validate", "review", "retry")
+    out = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        e = json.loads(line)
+        if e["event"] in keep:
+            out.append((e["event"], e.get("capability"), e.get("structure"), e.get("approved"),
+                        e.get("mean_delta"), e.get("sha256"),
+                        json.dumps([c["structure"] for c in e.get("candidates", [])])))
+    return out
+
+
+def replay_check(d: Path, interrupted: list[Path]) -> list[dict]:
+    """Did the replay take exactly the decisions the interrupted attempts had taken so far?"""
+    new = _decisions(d / "events.jsonl")
+    checks = []
+    for old_dir in interrupted:
+        old = _decisions(old_dir / "events.jsonl")
+        checks.append({"attempt": old_dir.name, "decisions_before_interruption": len(old),
+                       "identical_prefix": new[:len(old)] == old})
+    return checks
 
 
 def active_artifacts(out: Path, name: str) -> list[dict]:
@@ -343,6 +381,49 @@ def contrast(a_recs: dict, b_recs: dict) -> dict:
     return out
 
 
+def diagnosis_consistency(acq_dir: Path) -> dict:
+    """F8, corrected after the independent review: capability building blocks in a
+    research finding are expanded into their own structure before matching, and each
+    task counts once (its first kept finding). The loop's own figure is also reported."""
+    import re
+    from quanta.capabilities.acquire import MODE_FEATURES
+    blocks = {}
+    reg = acq_dir / "registry.jsonl"
+    if reg.exists():
+        for line in reg.read_text().splitlines():
+            e = json.loads(line)
+            if e["event"] == "propose":
+                for i, t in enumerate(e["record"]["artifact"]["terms"]):
+                    blocks[f"{e['capability_id']}.t{i}"] = t.get("structure", "")
+    pattern = re.compile(r"<([^<>]+)>")
+
+    def expand(key: str) -> str:
+        for _ in range(5):
+            new = pattern.sub(lambda m: blocks.get(m.group(1), m.group(0)), key)
+            if new == key:
+                break
+            key = new
+        return key
+
+    seen, hits, total = set(), 0, 0
+    per_mode: dict = defaultdict(lambda: [0, 0])
+    for line in (acq_dir / "events.jsonl").read_text().splitlines():
+        e = json.loads(line)
+        if e.get("event") != "research" or not e.get("kept") or e["task"] in seen:
+            continue
+        check = MODE_FEATURES.get(e["mode"])
+        if check is None:
+            continue
+        seen.add(e["task"])
+        ok = bool(check(expand(e["kept"])))
+        hits += ok
+        total += 1
+        per_mode[e["mode"]][0] += ok
+        per_mode[e["mode"]][1] += 1
+    return {"checked_tasks": total, "consistent": hits, "rate": round(hits / total, 3) if total else None,
+            "per_mode": {m: {"consistent": a, "checked": b} for m, (a, b) in per_mode.items()}}
+
+
 def hypotheses(res: dict) -> dict:
     """The pre-registered decision rules (PREREGISTRATION.md, section 5)."""
     v = res["vs_C0"].get(PRIMARY, {})
@@ -365,7 +446,10 @@ def phase_analyze(out: Path, rep: int) -> dict:
     final = out / "final"
     conds = json.loads((final / "summary.json").read_text())["conditions"]
     splits = list(FINAL_SPLITS) + ["external"]
-    recs = {c: {s: read_jsonl(final / c / f"{s}.jsonl") for s in splits if (final / c / f"{s}.jsonl").exists()}
+    def have(path: Path) -> bool:                    # raw file, or the committed gzip copy
+        return path.exists() or path.with_name(path.name + ".gz").exists()
+
+    recs = {c: {s: read_jsonl(final / c / f"{s}.jsonl") for s in splits if have(final / c / f"{s}.jsonl")}
             for c in conds}
     res: dict = {"replication": rep, "descriptive": {}, "vs_C0": {}, "pairs": {}, "by_family": {}}
     for c in conds:
@@ -374,10 +458,12 @@ def phase_analyze(out: Path, rep: int) -> dict:
         if c != BASE:
             res["vs_C0"][c] = contrast(recs[BASE], recs[c])
             res["by_family"][c] = {s: by_family(recs[BASE][s], recs[c][s]) for s in recs[c] if s != "external"}
-    for a, b in [(PRIMARY, "Crand_S0_random_control"), (PRIMARY, "Coracle_S0_designer"),
-                 (PRIMARY, "C2noinit_S0_acquired_without_inits"), ("C1_S0_construct", "C3_S0_acquired_construct")]:
-        if a in recs and b in recs:
-            res["pairs"][f"{b} - {a}"] = contrast(recs[a], recs[b])
+    # each entry is "<minuend> - <subtrahend>" and holds minuend minus subtrahend
+    for minuend, subtrahend in [(PRIMARY, "Crand_S0_random_control"), ("Coracle_S0_designer", PRIMARY),
+                                ("C2noinit_S0_acquired_without_inits", PRIMARY),
+                                ("C3_S0_acquired_construct", "C1_S0_construct")]:
+        if minuend in recs and subtrahend in recs:
+            res["pairs"][f"{minuend} - {subtrahend}"] = contrast(recs[subtrahend], recs[minuend])
 
     # Memorization: effect on the very training tasks the capabilities came from vs fresh test tasks.
     acquired = active_artifacts(out, "acquire")
@@ -392,6 +478,7 @@ def phase_analyze(out: Path, rep: int) -> dict:
     res["random_control"] = json.loads((out / "random" / "summary.json").read_text())
     for k in ("acquisition", "random_control"):        # keep analysis.json readable; full copies stay in summary.json
         res[k] = {kk: res[k][kk] for kk in ("active", "report", "seconds", "proposer_seen_seeds", "memory")}
+    res["diagnosis_consistency_corrected"] = diagnosis_consistency(out / "acquire")
     fresh = out / "fresh" / "summary.json"
     res["fresh_environment"] = json.loads(fresh.read_text()) if fresh.exists() else None
     res["hypotheses"] = hypotheses(res)

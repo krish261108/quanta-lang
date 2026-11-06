@@ -79,12 +79,19 @@ class RunState:
         return cls(**json.loads(path.read_text(encoding="utf-8")))
 
 
+def independently_verified(ledger: Ledger, claim) -> bool:
+    """A claim the fresh-context verifier promoted, never refuted or flagged since."""
+    if claim.refuted or claim.needs_review:
+        return False
+    return any(ledger.evidence[e].kind == "verification" for e in claim.evidence_ids if e in ledger.evidence)
+
+
 class ResearchLoop:
     def __init__(self, problem: str, *, model: Model, run_dir: str | Path, workspace: str | Path | None = None,
                  genome: Genome | None = None, governor: Governor | None = None,
                  memory: MemoryStore | None = None, human: HumanChannel | None = None,
                  registry: ToolRegistry | None = None, verifier_model: Model | None = None,
-                 max_tasks_per_iteration: int = 40) -> None:
+                 max_tasks_per_iteration: int = 40, sandbox_user: str | None = None) -> None:
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         state_path = self.run_dir / "state.json"
@@ -115,7 +122,7 @@ class ResearchLoop:
         self.verifier_factory = AgentFactory(verifier_model or model, self.registry,
                                              subagent_effort=self.genome.main_effort, allow_delegation=False)
         self.ctx = ToolContext(self.workspace, self.governor, self.ledger, memory, self.state.run_id,
-                               "orchestrator", self.human)
+                               "orchestrator", self.human, sandbox_user=sandbox_user)
         self.max_tasks_per_iteration = max_tasks_per_iteration
 
     @classmethod
@@ -584,8 +591,11 @@ class ResearchLoop:
                                     "iterations": st.iteration})
         subject = st.problem[:80]
         for c in self.ledger.by_status(Status.FACT):
-            self.memory.add_knowledge(subject, c.statement, status="fact", confidence=c.confidence, verified=True,
-                                      run_id=st.run_id, meta={"claim": c.id})
+            # Only facts the independent verifier promoted count as verified memory; a FACT the
+            # agent grounded itself is kept, but cannot steer future behaviour.
+            self.memory.add_knowledge(subject, c.statement, status="fact", confidence=c.confidence,
+                                      verified=independently_verified(self.ledger, c), run_id=st.run_id,
+                                      meta={"claim": c.id})
         if st.plan:
             titles = [t["title"] for t in st.plan["tasks"] if t["status"] == "done"]
             if titles:

@@ -254,3 +254,34 @@ def test_new_options_default_off_reproduce_the_legacy_loop():
     assert (a.answer, a.credence, a.n_experiments) == (b.answer, b.credence, b.n_experiments)
     assert [o.x for o in a.observations] == [o.x for o in b.observations]
     assert Genome().fingerprint() == Genome(pool_equivalent=False).fingerprint()
+
+
+def test_evaluation_records_are_reused_only_for_identical_tasks(tmp_path, monkeypatch):
+    config = Toolkit(S0, []).to_config()
+    first = R.EvaluationService(tmp_path, workers=2).records(config, "validation", 3, block=0)
+    replay = R.EvaluationService(tmp_path, workers=2)
+    monkeypatch.setattr(R, "evaluate", lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-evaluated")))
+    assert replay.records(config, "validation", 3, block=0) == json.loads(json.dumps(first, default=str))
+    path = next(tmp_path.glob("validation-*.jsonl"))
+    lines = path.read_text().splitlines()
+    path.write_text("\n".join(lines[:2]) + "\n")             # an incomplete file is not reused
+    with pytest.raises(AssertionError, match="re-evaluated"):
+        R.EvaluationService(tmp_path, workers=2).records(config, "validation", 3, block=0)
+
+
+def test_preregistered_h5_rule_reads_the_contrast_it_needs():
+    import importlib.util
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("ca_run", root / "experiments" / "capability_acquisition" / "run.py")
+    run = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run)
+    base = [{"task_id": f"t{i}", "score": 0.5} for i in range(40)]
+    better = [{**r, "score": 0.6} for r in base]
+    pair = run.compare(base, better)                      # C2 - Crand when C2 is better
+    res = {"vs_C0": {run.PRIMARY: {"test": {"ci_low": 0.05}}},
+           "acquisition": {"active": [1, 2]}, "random_control": {"active": [1]},
+           "pairs": {f"{run.PRIMARY} - Crand_S0_random_control": {"test": pair}}}
+    assert run.hypotheses(res)["H5_beats_random_control"] is True
+    res["pairs"][f"{run.PRIMARY} - Crand_S0_random_control"] = {"test": run.compare(better, base)}
+    assert run.hypotheses(res)["H5_beats_random_control"] is False

@@ -90,3 +90,99 @@ def test_failed_tool_calls_cannot_ground_facts(tmp_path):
     out = reg.execute("assert_claim", {"statement": "the moon is made of cheese", "status": "fact",
                                        "confidence": 0.99, "evidence_ids": [eid]}, ctx)
     assert "downgraded" in out.text()
+
+
+def test_agents_cannot_call_tools_outside_their_role(tmp_path):
+    from quanta.agent import Agent
+    from quanta.llm import ScriptedModel
+    (tmp_path / "keep.txt").write_text("x")
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore())
+    model = ScriptedModel([{"tool_calls": [("write_file", {"path": "keep.txt", "content": "overwritten"})]},
+                           {"text": "done"}])
+    agent = Agent(model=model, registry=default_registry(), ctx=ctx, role="generalist", tool_names=["read_file"])
+    res = agent.run("try to write")
+    assert (tmp_path / "keep.txt").read_text() == "x"
+    assert res.tool_log[0]["is_error"]
+    assert any(e["event"] == "tool_refused" for e in ctx.governor.audit.entries)
+
+
+def test_provider_side_tool_calls_are_audited(tmp_path):
+    from quanta.agent import Agent
+    from quanta.llm import ScriptedModel
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore())
+    model = ScriptedModel([{"text": "searched", "server_tool_calls": [("web_search", {"query": "q"})]}])
+    Agent(model=model, registry=default_registry(), ctx=ctx, role="generalist").run("search")
+    rec = [e for e in ctx.governor.audit.entries if e["event"] == "server_tool"]
+    assert rec and rec[0]["tool"] == "web_search" and "not pre-authorized" in rec[0]["note"]
+
+
+def test_only_independently_verified_facts_count_as_verified_memory():
+    from quanta.solver import independently_verified
+    led = Ledger()
+    obs = led.add_evidence("execution", "ran it")
+    self_grounded = led.assert_claim("a", "fact", 0.9, evidence=[obs.id])
+    assert not independently_verified(led, self_grounded)
+    inf = led.assert_claim("b", "inference", 0.8, evidence=[obs.id])
+    ver = led.add_evidence("verification", "verifier supported b", {"grounding": [obs.id]})
+    led.promote_to_fact(inf.id, ver.id)
+    assert independently_verified(led, led.claims[inf.id])
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="switching users needs root")
+def test_sandboxed_agent_code_cannot_touch_oversight_files():
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+    base = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        os.chmod(base, 0o755)
+        ws, run = base / "workspace", base / "run"
+        ws.mkdir()
+        run.mkdir()
+        os.chmod(ws, 0o777)
+        audit = run / "audit.jsonl"
+        audit.write_text("original\n")
+        ctx = ToolContext(ws, Governor(), Ledger(), MemoryStore(), sandbox_user="nobody")
+        reg = default_registry()
+        code = (f"open({str(audit)!r}, 'w').write('forged')\n")
+        r = reg.execute("run_python", {"code": code}, ctx)
+        assert r.is_error and "Permission" in r.text()
+        assert audit.read_text() == "original\n"
+        ok = reg.execute("run_python", {"code": "open('result.txt', 'w').write('42')"}, ctx)
+        assert not ok.is_error and (ws / "result.txt").read_text() == "42"
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_sandbox_fails_closed_without_privileges(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore(), sandbox_user="nobody")
+    r = default_registry().execute("run_python", {"code": "print(1)"}, ctx)
+    assert r.is_error and "refusing to run unsandboxed" in r.text()
+
+
+def test_audit_check_has_no_race_with_parallel_appends(tmp_path):
+    import threading
+    g = Governor(audit=AuditLog(tmp_path / "audit.jsonl"))
+    denied = []
+
+    def worker():
+        for _ in range(40):
+            if not g.authorize(Action("read_file", {"path": "x" * 500}, Risk.READ_ONLY)).allowed:
+                denied.append(1)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not denied and not g.kill_switch.is_tripped()
+    assert g.audit.intact() and g.audit.verify()[0]
+
+
+def test_shell_prefix_rule_ignores_surrounding_whitespace():
+    approver = AllowlistApprover([shell_prefix_rule("pytest ")])
+    assert approver.approve(Action("run_shell", {"command": "pytest -q"}, Risk.HIGH)).allowed

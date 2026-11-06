@@ -8,3 +8,9 @@ venv/
 *.egg-info/
 runs/
 .quanta/
+# capability-acquisition per-task records: committed gzip-compressed (pack_results.py)
+experiments/capability_acquisition/results/**/*.jsonl
+!experiments/capability_acquisition/results/**/events.jsonl
+!experiments/capability_acquisition/results/**/registry.jsonl
+experiments/capability_acquisition/results/**/*.tmp
+experiments/zero_category/run.log

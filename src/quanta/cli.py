@@ -49,7 +49,7 @@ def _loop_kwargs(args, run_dir: Path) -> dict:
     return {"model": model, "verifier_model": verifier, "governor": _governor(args, run_dir),
             "memory": MemoryStore(args.memory), "human": human,
             "genome": Genome.load(args.genome) if args.genome else Genome(),
-            "workspace": args.workspace}
+            "workspace": args.workspace, "sandbox_user": getattr(args, "sandbox_user", None)}
 
 
 def cmd_solve(args) -> int:
@@ -181,6 +181,8 @@ def build_parser() -> argparse.ArgumentParser:
         llm_opts(p)
         p.add_argument("--verifier-model", help="use a different model for independent verification")
         p.add_argument("--workspace", help="directory the agents may read/write (default: RUN_DIR/workspace)")
+        p.add_argument("--sandbox-user", help="run agent shell/Python as this unprivileged user (harness must "
+                                              "run as root; the workspace must be writable by that user)")
         p.add_argument("--genome", help="strategy genome JSON")
         p.add_argument("--memory", default=str(DEFAULT_MEMORY))
         p.add_argument("--max-steps", type=int, default=400)

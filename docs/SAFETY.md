@@ -92,8 +92,12 @@ so it appears in the final report.
 * `run_python` executes arbitrary code in the workspace at LOW risk. That is reasonable
   inside an isolated environment and unreasonable on a personal machine. The audit showed
   such code can also rewrite the run's own state, ledger and audit files and delete the stop
-  file; the live-log check and the latching kill switch catch some of this during a run,
-  but only an OS-level sandbox (separate user, read-only oversight files) closes it.
+  file; the live-log check and the latching kill switch catch some of this during a run.
+  `quanta solve --sandbox-user USER` closes it with an OS boundary: when the harness runs as
+  root, agent shell and Python run as the unprivileged USER, who can write the workspace but
+  not the run directory (tested: a forged audit-log write is refused by the OS). Without that
+  option, or without root, the risk remains; the tool refuses to run unsandboxed when a
+  sandbox user was requested but cannot be applied.
 * Self-modification of capabilities (see [CAPABILITY_ACQUISITION.md](CAPABILITY_ACQUISITION.md))
   is limited to arithmetic expressions checked by a static policy and evaluated in worker
   subprocesses. Evaluating model-written code would need an OS-level sandbox first.
