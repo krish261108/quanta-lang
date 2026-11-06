@@ -1,12 +1,14 @@
 # Architecture
 
-Quanta is a harness, not a mind. A language model (Claude, via `quanta.llm.AnthropicModel`)
-supplies open-ended reasoning, reading, writing and coding. Deterministic code around it
-supplies what models do badly on their own over long horizons: durable state, explicit
-competing hypotheses, discriminating experiments, an evidence ledger that will not let
-an unsupported claim be called a fact, independent verification, calibrated uncertainty,
-hard limits on what may be done without a human, and a way to improve its own strategy
-that only keeps changes that measurably help.
+Quanta is a harness, not a mind, and not a general intelligence. A language model (Claude,
+via `quanta.llm.AnthropicModel`) would supply open-ended reasoning, reading, writing and
+coding; that path is tested only with scripted models. Deterministic code around it supplies
+what models do badly on their own over long horizons: durable state, explicit competing
+hypotheses, discriminating experiments, an evidence ledger that requires grounding evidence
+before a claim is called a fact, independent verification, calibrated uncertainty, in-process
+limits on what may be done without a human, a way to improve its own strategy that only keeps
+changes that measurably help, and a way to acquire new hypothesis families from its failures
+that only keeps those an independent reviewer approves.
 
 ## The loop
 
@@ -49,7 +51,10 @@ it is meant to be used.
 | `uncertainty.py` | Calibration (Brier, log score, ECE, reliability), expected-loss rule for asking humans, diminishing-returns stopping, self-consistency. |
 | `science/hypotheses.py` | Hypotheses as fittable models; weighted/robust least squares; safe formula compiler (AST whitelist) + Nelder-Mead for model-proposed laws. |
 | `science/discovery.py` | Automated frame → recall → experiment → analyze → revise → falsify → stop → deliver loop. |
-| `bench/` | Identifiable law-discovery tasks, proper-scoring grader, parallel harness, data splits. Protected from self-modification. |
+| `bench/` | Identifiable law-discovery tasks, proper-scoring grader, parallel harness, data splits; the capability-acquisition evaluator (`acquisition.py`), process isolation (`isolation.py`), the evaluation service and independent reviewer (`review.py`), real-data and blind suites (`external.py`, `sealed.py`), frozen scoring code (`frozen.py`, `policy.py`). Protected from self-modification. |
+| `science/synth.py` | Program search over a small expression language (variable projection fits, MDL score, beam search); learned abstractions as building blocks. |
+| `science/toolkit.py`, `science/worker.py` | Capability artifacts as hypothesis families; the isolated solver worker and its JSON-lines protocol. |
+| `capabilities/` | Versioned append-only capability registry, structured gap diagnosis, artifact building and subprocess unit tests, the acquisition loop and its random-proposal control. |
 | `llm.py` | `AnthropicModel` (adaptive thinking, explicit effort, server-side web search/fetch, prompt caching, refusal fallbacks, `pause_turn` handling) and `ScriptedModel` for tests. History is append-only. |
 | `tools.py` | Governed tools: files (workspace-confined, backed-up writes), shell (risk-classified), Python, HTTP fetch, citation checking, memory, ledger, human input, perception, hypothesis comparison. Executions become grounding evidence automatically. |
 | `perception.py` | Text/code/docs, images and PDFs (as model content blocks), video key frames (ffmpeg), audio metadata (+ optional transcriber), environment snapshot. Reports explicitly when a modality was not perceived. |
@@ -81,12 +86,13 @@ Status legend:
 | **Collaborate** | `spawn_subagent`: roles, fresh contexts, depth limit, budget share charged to parent, parallel execution | Tested with a scripted model. Whether delegation helps is model-dependent and unmeasured. |
 | **Verify** | Fresh-context verifier; promotion to fact requires grounding evidence; falsification record | Tested. |
 | **Self-correct** | Refutation propagation; falsification rounds; hypothesis-space expansion when all named hypotheses fail; retry-with-error, decomposition, replanning; anti-fabrication rules (evidence only from real executions; unverified quotes cannot ground facts) | Discovery-side: measured. Agent-side: tested. Not a general hallucination detector. |
-| **Learn** | Verified outcomes stored in memory set future priors; procedures with win/loss records | **Measured** (learning curve in `experiments/ANALYSIS.md`). |
-| **Self-improve** | `improve.py`: diagnosis-driven and LLM proposals, sandboxed code patches limited to mutable paths, paired bootstrap gate, replication, held-out test, protected surfaces | **Measured** (`docs/SELF_IMPROVEMENT.md`). Code-patch path tested; no LLM-written patches were evaluated. |
-| **Generalize** | No special mechanism beyond the general loop, model-proposed hypotheses, and the flexible "none of the above" baseline | Only measured inside the benchmark's task distribution. |
+| **Learn** | Verified outcomes stored in memory set future priors; procedures with win/loss records; acquired capabilities and rejected candidates stored in memory | Learning curve measured with an earlier code version and not re-verified; its "verified" outcomes are the grader's ground truth (oracle labels). |
+| **Self-improve** | `improve.py`: diagnosis-driven and LLM proposals, sandboxed code patches limited to mutable paths, paired bootstrap gate, replication, held-out test, protected surfaces | Strategy level **measured** (`docs/SELF_IMPROVEMENT.md`; re-verified with the committed code). Code-patch path tested; no LLM-written patches were evaluated. |
+| **Acquire capabilities** | `capabilities/`: self-assessed failure, diagnosis, program search, artifact, unit tests, validation, independent reviewer on fresh held-out and transfer blocks, registry | Pre-registered experiment (`experiments/capability_acquisition/`); see `docs/CAPABILITY_ACQUISITION.md` for results. |
+| **Generalize** | The flexible "none of the above" baseline, per-task program search, acquired capabilities | Measured on transfer (regime shift, composition), blind novel classes and 29 real datasets in the capability-acquisition experiment; all 1-D. |
 | **Long horizons** | Episode-based contexts seeded from durable state; checkpoint after every phase and task; `quanta resume`; budgets in steps/tokens/dollars/hours | Resume tested. Not tested on multi-day runs. |
 | **Know when it doesn't know** | Calibrated credence (tempering), proper scoring, "none" answers, human-input requests below a credence threshold, expected-loss rule for questions | **Measured** (Brier/ECE, confidently-wrong rate). |
-| **Preserve human control** | Governor invariants, protected surfaces, code adoption needs approval | Tested, including a test that the self-improver cannot touch its own oversight. |
+| **Preserve human control** | Governor invariants, protected surfaces, code adoption needs approval; the capability reviewer is outside the acquisition loop's authority | Tested, including that the self-improver cannot patch its own oversight. In-process only: an audit reproduced bypasses (several now fixed, `tests/test_hardening.py`); `run_python` can still tamper with run files without an OS sandbox. |
 
 ## Long-horizon design
 
@@ -99,7 +105,7 @@ back unchanged.
 
 ## Model usage
 
-Defaults: `claude-opus-5-5`, adaptive thinking, `effort=high` for orchestration and
+Defaults: the model configured in `quanta.llm`, adaptive thinking, `effort=high` for orchestration and
 `medium` for sub-agents (both genome parameters), server-side web search/fetch
 (`web_search_20260209`, `web_fetch_20260209`), prompt caching on the stable system prefix,
 and server-side refusal fallbacks (`fallbacks="default"`). The verifier can be a different

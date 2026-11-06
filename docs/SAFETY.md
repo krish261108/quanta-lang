@@ -26,14 +26,26 @@ Every tool call goes through `ToolRegistry.execute`, which:
 Enforced in `governance.py` and tested in `tests/test_governance_invariants.py`:
 
 1. HIGH and CRITICAL actions are never auto-approved. The auto-approval ceiling is clamped
-   to LOW in code; no configuration, genome or model output can raise it.
+   to LOW on every assignment, from a private copy of the constant; no configuration, genome
+   or model output can raise it.
 2. When the kill switch is tripped (programmatically, or by creating `RUN_DIR/STOP`),
-   nothing further is authorized and agents halt at the next step.
+   nothing further is authorized and agents halt at the next step. The switch latches:
+   deleting the stop file does not re-enable the run; only an explicit operator reset does.
 3. When any budget (steps, tokens, dollars, wall-clock) is exhausted, nothing further is
-   authorized. Sub-agent spending is charged to the parent budget.
-4. Every authorization decision is appended to a hash-chained audit log; `quanta audit
-   verify FILE` detects any after-the-fact edit.
+   authorized. Sub-agent spending is charged to the parent budget. Negative charges are refused.
+4. Every authorization decision, including one where the approver itself fails, is appended
+   to a hash-chained audit log with a hash of the full arguments. `quanta audit verify FILE`
+   detects in-place edits. While the governor is running, any truncation, deletion or
+   rewrite of the file trips the kill switch.
 5. With no human available, the default approver denies.
+6. Shell pre-authorizations (`--allow-shell-prefix`) match a whole command word and refuse
+   any command containing shell control syntax (`;`, `&&`, `|`, backticks, `$(`, redirects,
+   newlines).
+
+All of these are in-process guards. They hold against the agent's *tools*, not against code
+running in the same process or as the same OS user, which can rebind anything. An
+independent audit (see [RESEARCH_PROGRAM.md](RESEARCH_PROGRAM.md)) found and reproduced
+several bypasses; the ones fixed are covered by `tests/test_hardening.py`.
 
 ## Self-improvement cannot weaken oversight
 
@@ -52,8 +64,11 @@ Enforced in `governance.py` and tested in `tests/test_governance_invariants.py`:
 ## Epistemic safety
 
 * Agents cannot create observation or execution evidence; only the harness does, when
-  something actually ran. A claim labelled FACT without grounding evidence is
-  automatically downgraded.
+  something actually ran successfully (a failed call is recorded as a note). A claim
+  labelled FACT without grounding evidence is automatically downgraded. The ledger checks
+  the *kind* of evidence, not whether it is relevant to the claim: a successful but
+  unrelated execution can still ground a FACT. Treat FACT as "grounded in something that
+  happened", not as "true".
 * Citations are checked: a quote that does not appear in the fetched source is recorded
   as an unverified note, which cannot ground a fact.
 * Agents may write to long-term memory but cannot mark memories verified, so unverified
@@ -75,6 +90,12 @@ so it appears in the final report.
   Python code that deletes files) can act outside what the classifier sees. Run the
   harness inside a container or VM. The classifier is defense in depth, not a sandbox.
 * `run_python` executes arbitrary code in the workspace at LOW risk. That is reasonable
-  inside an isolated environment and unreasonable on a personal machine.
+  inside an isolated environment and unreasonable on a personal machine. The audit showed
+  such code can also rewrite the run's own state, ledger and audit files and delete the stop
+  file; the live-log check and the latching kill switch catch some of this during a run,
+  but only an OS-level sandbox (separate user, read-only oversight files) closes it.
+* Self-modification of capabilities (see [CAPABILITY_ACQUISITION.md](CAPABILITY_ACQUISITION.md))
+  is limited to arithmetic expressions checked by a static policy and evaluated in worker
+  subprocesses. Evaluating model-written code would need an OS-level sandbox first.
 * Approvals are only as good as the human reading them; requests show the tool, the risk
   tier and the arguments.
