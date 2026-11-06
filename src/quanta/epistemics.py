@@ -16,6 +16,7 @@ The rules are enforced by code, not by asking a model to be careful:
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -33,8 +34,9 @@ class Status(str, Enum):
 GROUNDING_KINDS = frozenset({"observation", "execution", "source", "verification"})
 EVIDENCE_KINDS = GROUNDING_KINDS | {"derivation", "falsification", "note"}
 
-# Confidence cap applied to claims that depend on a refuted claim.
+# Confidence cap applied to claims that depend on a refuted claim, and to refuted claims.
 REFUTED_DEPENDENT_CAP = 0.2
+REFUTED_CAP = 0.05
 
 
 @dataclass
@@ -157,13 +159,35 @@ class Ledger:
             raise LedgerError(f"unknown claim id {claim_id!r}") from None
 
     def update_confidence(self, claim_id: str, confidence: float, note: str) -> Claim:
+        if not math.isfinite(confidence):
+            raise LedgerError("confidence must be a finite number")
         with self._lock:
             c = self.get(claim_id)
-            if c.needs_review or c.refuted:
+            confidence = max(0.0, min(1.0, confidence))
+            if c.refuted:
+                confidence = min(confidence, REFUTED_CAP)
+            elif c.needs_review:
                 confidence = min(confidence, REFUTED_DEPENDENT_CAP)
-            c.confidence = max(0.0, min(1.0, confidence))
+            if c.status is Status.INFERENCE and c.depends_on:
+                confidence = min(confidence, min(self.claims[d].confidence for d in c.depends_on))
+            c.confidence = confidence
             c.notes.append(note)
+            self._recap_dependents(claim_id)
             return c
+
+    def _recap_dependents(self, root: str) -> None:
+        """An inference may never be more confident than its weakest premise: when a
+        premise is lowered, lower the inferences built on it (transitively)."""
+        frontier = [root]
+        while frontier:
+            current = frontier.pop()
+            for c in self.claims.values():
+                if current in c.depends_on and c.status is Status.INFERENCE:
+                    cap = min(self.claims[d].confidence for d in c.depends_on)
+                    if c.confidence > cap:
+                        c.confidence = cap
+                        c.notes.append(f"confidence lowered to {cap:.3f}: premise {current} weakened")
+                        frontier.append(c.id)
 
     def promote_to_fact(self, claim_id: str, verification_evidence: str) -> Claim:
         """Promote a claim after an independent verification grounded it."""
@@ -174,6 +198,8 @@ class Ledger:
                 raise LedgerError("promotion to fact requires grounding evidence")
             if c.refuted:
                 raise LedgerError("cannot promote a refuted claim")
+            if c.needs_review:
+                raise LedgerError("cannot promote a claim whose premises were refuted or are under review")
             c.status = Status.FACT
             c.evidence_ids.append(verification_evidence)
             c.notes.append(f"promoted to fact by {verification_evidence}")
@@ -188,7 +214,7 @@ class Ledger:
             c.falsifications.append(FalsificationAttempt(test, outcome, list(evidence)))
             if outcome == "refuted":
                 c.refuted = True
-                c.confidence = min(c.confidence, 0.05)
+                c.confidence = min(c.confidence, REFUTED_CAP)
                 if c.status is Status.FACT:
                     c.status = Status.SPECULATION
                 c.notes.append(f"refuted by test: {test}")
@@ -209,6 +235,8 @@ class Ledger:
                     frontier.append(c.id)
 
     def mark_conflict(self, a: str, b: str) -> None:
+        if a == b:
+            raise LedgerError("a claim cannot conflict with itself")
         with self._lock:
             ca, cb = self.get(a), self.get(b)
             if b not in ca.contradicts:
@@ -219,14 +247,18 @@ class Ledger:
     # -- queries ---------------------------------------------------------
     def by_status(self, status: Status | str) -> list[Claim]:
         status = Status(status)
-        return [c for c in self.claims.values() if c.status is status and not c.refuted]
+        with self._lock:
+            return [c for c in self.claims.values() if c.status is status and not c.refuted]
 
     def refuted(self) -> list[Claim]:
-        return [c for c in self.claims.values() if c.refuted]
+        with self._lock:
+            return [c for c in self.claims.values() if c.refuted]
 
     def unresolved_conflicts(self) -> list[tuple[Claim, Claim]]:
         out = []
-        for c in self.claims.values():
+        with self._lock:
+            claims = list(self.claims.values())
+        for c in claims:
             for other_id in c.contradicts:
                 other = self.claims[other_id]
                 if c.id < other_id and not c.refuted and not other.refuted:
@@ -235,6 +267,10 @@ class Ledger:
 
     def summary(self, max_items: int = 40) -> str:
         """Compact text view for injecting into a model's context."""
+        with self._lock:
+            return self._summary(max_items)
+
+    def _summary(self, max_items: int) -> str:
         lines = []
         for status in Status:
             items = sorted(self.by_status(status), key=lambda c: -c.confidence)[:max_items]
@@ -267,15 +303,25 @@ class Ledger:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Ledger":
+        """Load a saved ledger, re-checking it: a FACT without grounding evidence is
+        downgraded, and the id counter is moved past every existing id so that new
+        claims can never overwrite old ones."""
         led = cls()
-        led._counter = data.get("counter", 0)
         for e in data.get("evidence", []):
             led.evidence[e["id"]] = Evidence(**e)
         for c in data.get("claims", []):
             c = dict(c)
             c["status"] = Status(c["status"])
             c["falsifications"] = [FalsificationAttempt(**f) for f in c.get("falsifications", [])]
-            led.claims[c["id"]] = Claim(**c)
+            claim = Claim(**c)
+            grounded = any(led.evidence.get(e) is not None and led.evidence[e].kind in GROUNDING_KINDS
+                           for e in claim.evidence_ids)
+            if claim.status is Status.FACT and not grounded:
+                claim.status = Status.INFERENCE if (claim.depends_on or claim.evidence_ids) else Status.SPECULATION
+                claim.notes.append("downgraded on load: no grounding evidence")
+            led.claims[claim.id] = claim
+        ids = [int(k[1:]) for k in [*led.evidence, *led.claims] if k[1:].isdigit()]
+        led._counter = max([int(data.get("counter", 0)), *ids])
         return led
 
     def save(self, path: str | Path) -> None:

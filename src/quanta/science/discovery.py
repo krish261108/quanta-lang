@@ -135,6 +135,24 @@ def posterior_from_evidence(scores: dict[str, float], temperature: float = 1.0) 
     return {k: v / total for k, v in sorted(z.items(), key=lambda kv: -kv[1])}
 
 
+def runs_test_p(xs: Sequence[float], residuals: Sequence[float]) -> float:
+    """One-sided Wald-Wolfowitz runs test on residual signs ordered by x: the probability
+    of this few runs or fewer if the signs were random. Few runs = systematic misfit."""
+    signs = [r > 0 for _, r in sorted(zip(xs, residuals)) if r != 0]
+    n1 = sum(signs)
+    n2 = len(signs) - n1
+    if n1 == 0 or n2 == 0:
+        return 1.0 if len(signs) < 8 else 0.0
+    runs = 1 + sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+    n = n1 + n2
+    mu = 2.0 * n1 * n2 / n + 1.0
+    var = 2.0 * n1 * n2 * (2.0 * n1 * n2 - n) / (n * n * (n - 1.0)) if n > 1 else 0.0
+    if var <= 0:
+        return 1.0
+    z = (runs - mu + 0.5) / math.sqrt(var)          # continuity correction
+    return 0.5 * math.erfc(-z / math.sqrt(2.0))
+
+
 def entropy(p: dict[str, float]) -> float:
     return -sum(v * math.log(v) for v in p.values() if v > 0)
 
@@ -439,6 +457,24 @@ class DiscoveryLoop:
                 break
             # A law constructed from the data must also survive fresh data before it is accepted.
             fresh_ok = last_construct_n < 0 or n >= last_construct_n + g.construct_holdout
+            if held and support >= g.stop_posterior and n >= g.min_experiments:
+                lf = fits[leader]
+                p_runs = runs_test_p([o.x for o in obs], [o.y - lf.predict(o.x) for o in obs])
+                if p_runs < 0.01:
+                    # About to accept a law whose residuals are systematic: let the acquired
+                    # capabilities compete before deciding.
+                    inadequacy = True
+                    ev = led.add_evidence("derivation", f"residuals of '{leader}' are systematic (runs test "
+                                          f"p={p_runs:.2g}); enabling acquired capabilities",
+                                          {"p_runs": p_runs, "capabilities": [h.name for h in held]})
+                    for h in held:
+                        hyps[h.name] = h
+                        self._register(h)
+                        hyp_claims[h.name] = led.assert_claim(
+                            f"The system follows the acquired law {h.name}.", Status.SPECULATION, 0.3,
+                            evidence=[ev.id], author="revise").id
+                    held = []
+                    continue
             if support >= g.stop_posterior and n >= g.min_experiments and fresh_ok:
                 if falsify_left > 0:
                     falsify_left -= 1
