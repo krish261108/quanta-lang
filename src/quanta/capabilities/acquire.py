@@ -48,7 +48,7 @@ MODE_FEATURES = {
 @dataclass
 class AcquisitionSettings:
     n_train: int = 150
-    n_val: int = 120
+    n_val: int = 800
     k_min: int = 2
     max_rounds: int = 6
     max_reviews_per_round: int = 2
@@ -145,8 +145,12 @@ class AcquisitionLoop:
                     scored.append((val["mean_delta"], rec, val))
             scored.sort(key=lambda t: -t[0])
             for delta, rec, val in scored:
-                if delta <= 0:
-                    self._reject(rec, f"no validation gain (mean delta {delta:+.4f})", stage="validation")
+                # Only candidates whose own validation interval excludes zero are worth a
+                # review: every review consumes a fresh, never-reused held-out block.
+                if val["ci_low"] <= 0:
+                    self._reject(rec, f"no significant validation gain (mean delta {delta:+.4f}, "
+                                      f"95% CI [{val['ci_low']:+.4f}, {val['ci_high']:+.4f}])",
+                                 stage="validation")
                     continue
                 if reviewed >= self.s.max_reviews_per_round or accepted is not None:
                     self._reject(rec, "not reviewed this round (review budget); remains unproven",
@@ -157,8 +161,6 @@ class AcquisitionLoop:
                 if decision.approved:
                     accepted = rec
                     config = self.config()
-                else:
-                    pass
             rinfo["reviews"] = reviewed
             if accepted is not None:
                 no_accept = 0
@@ -286,7 +288,7 @@ class AcquisitionLoop:
                              description=(f"Hypothesis family y = c0 + sum_i c_i * term_i with terms {sources}. "
                                           f"Constructed by program search from {cand['support']} failed training "
                                           f"tasks (diagnosed modes: {cand['modes']})."))
-        diag_example = next((d.to_dict() for d in diags if d.task == cand["tasks"][0]), {})
+        diag_example = next((d.to_dict() for d in diags if cand["tasks"] and d.task == cand["tasks"][0]), {})
         rec = CapabilityRecord(
             capability_id=cid, version=1, name=art["name"], description=art["description"],
             origin=f"acquired:{self.run_id}:round{rnd}",
@@ -399,6 +401,52 @@ class AcquisitionLoop:
 # ---------------------------------------------------------------------------
 # Control: random capabilities of matched size, through the same pipeline
 # ---------------------------------------------------------------------------
+
+class RandomAcquisitionLoop(AcquisitionLoop):
+    """The same loop with diagnosis-guided research replaced by random proposals:
+    each round proposes `max_candidates_per_round` random structures (sizes 1..synth_max_size;
+    at least as many attempts as the real loop gets), each with starting values fitted to
+    randomly chosen failed training tasks (the same data access the real loop has). They
+    then go through the identical implement / unit-test / validate / review pipeline. If
+    this control acquires capabilities as often, or as useful, as the real loop, the
+    diagnosis and research steps are not doing the work."""
+
+    def _research(self, diags, outs, config, rnd) -> dict:
+        by_id = {o["task_id"]: o for o in outs}
+        failed = [[(ob[0], ob[1]) for ob in (by_id[d.task].get("observations") or [])] for d in diags]
+        self._failed = [f for f in failed if len(f) >= 8]
+        self._robust = config["genome"].get("likelihood") == "student_t"
+        return {"researched": [], "found": []}
+
+    def _fitted_inits(self, model: Model) -> list[list[float]]:
+        inits = []
+        for obs in self.rng.sample(self._failed, min(3, len(self._failed))):
+            xs, ys = [o[0] for o in obs], [o[1] for o in obs]
+            if len(xs) - model.n_params < 2:
+                continue
+            try:
+                f = fit_model(model, xs, ys, robust=self._robust, rng=self.rng, max_starts=2)
+            except (FitError, ValueError, ZeroDivisionError, OverflowError):
+                continue
+            if all(math.isfinite(v) for v in f.params):
+                inits.append(list(f.params))
+        return inits
+
+    def _design(self, found, config) -> list[dict]:
+        existing = {t.get("structure") for a in config["capabilities"] for t in a["terms"]}
+        existing |= {a.get("structure") for a in config["capabilities"]}
+        cands, tries = [], 0
+        while len(cands) < self.s.max_candidates_per_round and tries < 200:
+            tries += 1
+            model = random_model(self.rng.randint(1, self.s.synth_max_size), self.rng)
+            key = model.key
+            if (model.size == 0 or key in self.attempted or key in existing
+                    or any(c["structure"] == key for c in cands)):
+                continue
+            cands.append({"structure": key, "model": model, "support": 0, "tasks": [], "modes": {"random": 1},
+                          "inits": self._fitted_inits(model), "mean_cv_ratio": None})
+        return cands
+
 
 def random_shape(size: int, rng: random.Random) -> Shape:
     if size == 0:

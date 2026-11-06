@@ -55,18 +55,37 @@ GAP = {"damped_oscillation": 0.2, "gaussian_bump": 0.2, "linear_sin": 0.2, "logi
        "lorentzian": 0.2}
 COMPOSE = {"wave_packet": 0.34, "double_bump": 0.33, "bump_plus_wave": 0.33}
 
-# seed ranges (disjoint)
+# seed ranges (disjoint): split s, task index i, replication r -> SPLITS[s] + i + REPLICATION_STRIDE * r
+SPLIT_WIDTH = 100_000
+REPLICATION_STRIDE = 10_000_000
 SPLITS = {
-    "dev": 90_000,                      # development and pilots only; never reported
-    "train": 100_000, "validation": 110_000, "gate": 120_000, "gate_transfer": 130_000,
-    "test": 140_000, "test_regime": 150_000, "test_compose": 160_000, "test_familiar": 165_000,
-    "sealed": 170_000,
+    "dev": 1_000_000,                   # development and pilots only; never reported
+    "train": 1_100_000, "validation": 1_200_000, "gate": 1_300_000, "gate_transfer": 1_400_000,
+    "test": 1_500_000, "test_regime": 1_600_000, "test_compose": 1_700_000, "test_familiar": 1_800_000,
+    "sealed": 1_900_000,
 }
 DECISION_SPLITS = {"train", "validation", "gate", "gate_transfer"}
 REPORT_ONLY_SPLITS = {"test", "test_regime", "test_compose", "test_familiar", "sealed"}
 
 
+SEALED_PREFIX = "sealed:"
+
+
+def _sealed():
+    """Category D, part 1: law classes written blind by an independent author
+    (`bench/sealed.py`). The experimenters use only this API and did not read the
+    module before the final evaluation; the acquisition loop never imports it."""
+    from . import sealed
+    return sealed
+
+
+def sealed_classes() -> list[str]:
+    return [SEALED_PREFIX + name for name in sorted(_sealed().CLASSES)]
+
+
 def truth_value(family: str, p: tuple[float, ...], x: float) -> float:
+    if family.startswith(SEALED_PREFIX):
+        return float(_sealed().truth(family[len(SEALED_PREFIX):], tuple(p), x))
     if family == "logistic":
         return p[0] + p[1] / (1.0 + math.exp(-p[2] * (x - p[3])))
     if family == "lorentzian":
@@ -87,6 +106,8 @@ def _sign(rng: random.Random) -> float:
 
 
 def sample_params(family: str, rng: random.Random, regime: str = "standard") -> tuple[float, ...]:
+    if family.startswith(SEALED_PREFIX):
+        return tuple(float(v) for v in _sealed().sample_params(family[len(SEALED_PREFIX):], rng))
     u = rng.uniform
     shifted = regime == "shifted"
     if family == "damped_oscillation":
@@ -143,7 +164,7 @@ def closest_core_nrmse(family: str, params: tuple[float, ...]) -> float:
 class AcqTask:
     seed: int
     split: str
-    kind: str              # familiar | gap | regime | compose
+    kind: str              # familiar | gap | regime | compose | novel
     family: str
     params: tuple[float, ...]
     noise_sd: float
@@ -179,6 +200,9 @@ class Instrument:
 
 
 def _kind_for(split: str, index_rng: random.Random) -> tuple[str, dict[str, float]]:
+    if split == "sealed":
+        names = sealed_classes()
+        return "novel", {n: 1.0 / len(names) for n in names}
     if split in ("test_regime", "gate_transfer"):
         return "regime", GAP
     if split == "test_compose":
@@ -195,7 +219,9 @@ def _kind_for(split: str, index_rng: random.Random) -> tuple[str, dict[str, floa
 def make_task(split: str, index: int, replication: int = 0) -> AcqTask:
     if split not in SPLITS:
         raise ValueError(f"unknown split {split!r}")
-    seed = SPLITS[split] + index + 1_000_000 * replication
+    if not 0 <= index < SPLIT_WIDTH:
+        raise ValueError(f"task index {index} outside the split")
+    seed = SPLITS[split] + index + REPLICATION_STRIDE * replication
     rng = random.Random(seed)
     kind, table = _kind_for(split, rng)
     families, weights = zip(*table.items())
@@ -255,7 +281,7 @@ def evaluate(config: dict, split: str, n: int, *, replication: int = 0, workers:
     every result here. Crashes and timeouts are scored as failures, never dropped."""
     from .isolation import Job, run_isolated
     ts = list(task_list) if task_list is not None else tasks(split, n, replication)
-    ids = [f"{t.split}:{replication}:{t.seed - SPLITS[t.split] - 1_000_000 * replication}" for t in ts]
+    ids = [f"{t.split}:{replication}:{t.seed - SPLITS[t.split] - REPLICATION_STRIDE * replication}" for t in ts]
     jobs = [Job(tid, Instrument(t), t.budget, solver_seed(t.seed), EVAL_X) for tid, t in zip(ids, ts)]
     outs = run_isolated(config, jobs, workers=workers, timeout=timeout)
     records = []

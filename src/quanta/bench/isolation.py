@@ -77,7 +77,12 @@ class _Worker:
                         self._send({"error": "measurement budget exhausted"})
                         continue
                     used += 1
-                    self._send({"y": job.instrument.measure(float(msg["x"]))})
+                    if hasattr(job.instrument, "measure_at"):
+                        # observational data: the measurement happens at the nearest available input
+                        xa, y = job.instrument.measure_at(float(msg["x"]))
+                        self._send({"y": y, "x": xa})
+                    else:
+                        self._send({"y": job.instrument.measure(float(msg["x"]))})
                 elif msg.get("cmd") == "result":
                     msg["measurements_used"] = used          # authoritative count
                     msg["seconds"] = round(time.perf_counter() - t0, 3)

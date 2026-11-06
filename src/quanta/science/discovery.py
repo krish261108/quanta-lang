@@ -282,6 +282,9 @@ class DiscoveryLoop:
 
         def measure(x: float, purpose: str) -> None:
             y = system.measure(x)
+            actual = getattr(system, "last_x", None)    # observational systems report the input used
+            if actual is not None:
+                x = actual
             ev = led.add_evidence("observation", f"measured y({x:.4g}) = {y:.6g}",
                                   {"x": x, "y": y, "purpose": purpose})
             obs.append(Observation(x, y, purpose, ev.id))

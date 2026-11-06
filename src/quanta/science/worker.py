@@ -7,7 +7,8 @@ Speaks a line-delimited JSON protocol on stdin/stdout with the trusted evaluator
     <- {"ok": true}
     -> {"cmd": "solve", "task_id": "...", "domain": [lo, hi], "budget": n, "seed": s, "eval_x": [...]}
     <- {"cmd": "measure", "x": 3.2}                    any number of times
-    -> {"y": 1.234}            or {"error": "..."}
+    -> {"y": 1.234}            or {"y": 1.234, "x": 3.17} (observational data: the
+                                  input actually measured) or {"error": "..."}
     <- {"cmd": "result", "task_id": "...", ...}
 
 The worker never receives a task's seed, parameters or truth: only measurements.
@@ -26,6 +27,7 @@ class RemoteInstrument:
         self.domain = tuple(domain)
         self._out = out
         self._in = inp
+        self.last_x: float | None = None
 
     def measure(self, x: float) -> float:
         self._out.write(json.dumps({"cmd": "measure", "x": float(x)}) + "\n")
@@ -33,6 +35,7 @@ class RemoteInstrument:
         reply = json.loads(self._in.readline())
         if "error" in reply:
             raise RuntimeError(f"instrument refused: {reply['error']}")
+        self.last_x = float(reply.get("x", x))
         return float(reply["y"])
 
 

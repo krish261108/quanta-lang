@@ -27,7 +27,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ..stats import paired_bootstrap
-from .acquisition import (DECISION_SPLITS, REPORT_ONLY_SPLITS, SPLITS, evaluate, make_task)
+from .acquisition import (DECISION_SPLITS, REPLICATION_STRIDE, REPORT_ONLY_SPLITS, SPLIT_WIDTH, SPLITS, evaluate,
+                          make_task)
 from .policy import PolicyError, check_source
 
 GATES = {
@@ -37,8 +38,12 @@ GATES = {
     "heldout_ci_low": 0.0,               # paired score gain on a fresh gate block (mixed tasks)
     "familiar_regression_ci_low": -0.01, # no meaningful loss on the familiar tasks of that block
     "transfer_ci_low": 0.0,              # paired score gain on a fresh block of transfer tasks
-    "n_gate": 150,
-    "n_transfer": 100,
+    # Sample sizes from a power analysis on a development pilot (per-task paired score
+    # differences: sd ~0.13 mixed, ~0.06-0.10 familiar, ~0.18 gap): ~80% power for a
+    # +0.01 mixed gain and for a familiar effect of -0.002 against the -0.01 margin.
+    "n_gate": 1200,
+    "n_transfer": 400,
+    "n_repro": 200,                       # tasks re-run in fresh workers for the determinism check
 }
 GATES_SHA = hashlib.sha256(json.dumps(GATES, sort_keys=True).encode()).hexdigest()
 
@@ -67,14 +72,17 @@ class EvaluationService:
         self.validations: dict[str, dict] = {}
 
     def records(self, config: dict, split: str, n: int, block: int = 0, *, with_observations=False,
-                workers: int | None = None, use_cache: bool = True) -> list[dict]:
-        key = (config_hash(config), split, n, block, with_observations)
+                workers: int | None = None, use_cache: bool = True, limit: int | None = None) -> list[dict]:
+        """Records for tasks [block*n, block*n + n) of `split` (only the first `limit`
+        of them if given)."""
+        key = (config_hash(config), split, n, block, with_observations, limit)
         if use_cache and key in self._cache:
             return self._cache[key]
-        recs = evaluate(config, split, n, replication=self.replication, workers=workers or self.workers,
-                        with_observations=with_observations,
-                        task_list=_block_tasks(split, n, block, self.replication))
-        path = self.log_dir / f"{split}-r{self.replication}-b{block}-{key[0]}.jsonl"
+        task_list = _block_tasks(split, n, block, self.replication)[:limit]
+        recs = evaluate(config, split, len(task_list), replication=self.replication,
+                        workers=workers or self.workers, with_observations=with_observations, task_list=task_list)
+        suffix = "" if use_cache else "-rerun"
+        path = self.log_dir / f"{split}-r{self.replication}-b{block}-n{n}-{key[0]}{suffix}.jsonl"
         with path.open("w", encoding="utf-8") as f:
             for r in recs:
                 f.write(json.dumps({k: v for k, v in r.items() if k != "observations"}, default=str) + "\n")
@@ -120,16 +128,23 @@ class ReviewDecision:
 
 
 class Reviewer:
-    def __init__(self, service: EvaluationService, log_dir: str | Path, *, workers: int = 4) -> None:
+    """`first_block` lets an experiment skip gate blocks that may have been touched
+    during development; blocks are never reused after that."""
+
+    def __init__(self, service: EvaluationService, log_dir: str | Path, *, workers: int = 4,
+                 first_block: int = 0) -> None:
         self.service = service
         self.log_dir = Path(log_dir)
         (self.log_dir / "reviews").mkdir(parents=True, exist_ok=True)
         self.workers = workers
         self._state_path = self.log_dir / "reviewer_state.json"
-        self.state = json.loads(self._state_path.read_text()) if self._state_path.exists() else {"next_block": 0}
+        self.state = (json.loads(self._state_path.read_text()) if self._state_path.exists()
+                      else {"next_block": first_block})
 
     def _next_block(self) -> int:
         b = self.state["next_block"]
+        if (b + 1) * max(GATES["n_gate"], GATES["n_transfer"]) > SPLIT_WIDTH:
+            raise RuntimeError("held-out gate blocks exhausted")
         self.state["next_block"] = b + 1
         self._state_path.write_text(json.dumps(self.state))
         return b
@@ -170,8 +185,8 @@ class Reviewer:
 
         # R7 leakage: the proposer saw only decision-split training/validation seeds.
         allowed = {s for s in DECISION_SPLITS if s in ("train", "validation")}
-        ranges = [(SPLITS[s] + 1_000_000 * self.service.replication,
-                   SPLITS[s] + 1_000_000 * self.service.replication + 10_000) for s in allowed]
+        ranges = [(SPLITS[s] + REPLICATION_STRIDE * self.service.replication,
+                   SPLITS[s] + REPLICATION_STRIDE * self.service.replication + SPLIT_WIDTH) for s in allowed]
         stray = [s for s in proposer_seen_seeds if not any(lo <= s < hi for lo, hi in ranges)]
         gate("no_leakage", not stray, {"seeds_outside_train_validation": len(stray)}, 0)
 
@@ -203,11 +218,13 @@ class Reviewer:
         ct = self._paired(tb, tc)
         gate("transfer", ct["ci_low"] > GATES["transfer_ci_low"], ct, f"ci_low > {GATES['transfer_ci_low']}")
 
-        # R6 reproducibility: same block, fresh workers, different worker count.
+        # R6 reproducibility: the first n_repro tasks of the same block, fresh workers,
+        # a different worker count; per-task scores must be identical.
+        k = GATES["n_repro"]
         rc2 = self.service.records(cand, "gate", GATES["n_gate"], block, workers=max(1, self.workers - 1),
-                                   use_cache=False)
-        same = [a["score"] for a in rc] == [b["score"] for b in rc2]
-        gate("reproducible", same, {"identical_per_task_scores": same}, True)
+                                   use_cache=False, limit=k)
+        same = [a["score"] for a in rc[:k]] == [b["score"] for b in rc2]
+        gate("reproducible", same, {"identical_per_task_scores": same, "n": len(rc2)}, True)
 
         recomputed = {"validation": cv, "heldout": ch, "familiar": cf, "transfer": ct,
                       "heldout_by_kind": self._by_kind(rb, rc)}
