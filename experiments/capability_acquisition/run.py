@@ -106,7 +106,13 @@ def write_jsonl(path: Path, recs: list[dict]) -> None:
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    """Per-task records; falls back to the committed gzip copy (see pack_results.py)."""
+    if not path.exists() and path.with_name(path.name + ".gz").exists():
+        import gzip
+        text = gzip.decompress(path.with_name(path.name + ".gz").read_bytes()).decode("utf-8")
+    else:
+        text = path.read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def log(msg: str) -> None:
