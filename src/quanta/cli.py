@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 
 from .genome import Genome
-from .governance import (AllowlistApprover, AllowRule, AuditLog, Budget, DenyAllApprover, Governor,
-                         InteractiveApprover, KillSwitch, Risk)
+from .governance import (AllowlistApprover, AuditLog, Budget, DenyAllApprover, Governor, InteractiveApprover,
+                         KillSwitch, shell_prefix_rule)
 
 DEFAULT_MEMORY = Path.home() / ".quanta" / "memory.db"
 
@@ -29,8 +29,7 @@ def _governor(args, run_dir: Path) -> Governor:
         fallback = InteractiveApprover()
     else:
         fallback = DenyAllApprover()
-    rules = [AllowRule("run_shell", Risk.HIGH, match=(lambda a, p=prefix: a.get("command", "").startswith(p)),
-                       note=f"shell commands starting with {prefix!r}") for prefix in args.allow_shell_prefix]
+    rules = [shell_prefix_rule(prefix) for prefix in args.allow_shell_prefix]
     approver = AllowlistApprover(rules, fallback) if rules else fallback
     return Governor(approver=approver,
                     budget=Budget(max_steps=args.max_steps, max_cost_usd=args.max_cost,

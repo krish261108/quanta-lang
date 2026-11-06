@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import threading
 import time
@@ -32,8 +33,25 @@ class Risk(IntEnum):
     CRITICAL = 3    # irreversible, or affects people/systems outside the sandbox
 
 
-# Hard ceiling for automatic approval. Not configurable on purpose.
+# Hard ceiling for automatic approval. Not configurable on purpose. The governor reads a
+# private copy, so rebinding the public name later does not raise the ceiling. (Code
+# running in the same process can still defeat any in-process guard; see SAFETY.md.)
 MAX_AUTO_APPROVE = Risk.LOW
+_CEILING = Risk.LOW
+
+
+def shell_prefix_rule(prefix: str, max_risk: Risk = Risk.HIGH) -> "AllowRule":
+    """Pre-authorize shell commands that start with `prefix` as a whole word and contain
+    no shell control syntax, so `pytest` does not also allow `pytest && git push`."""
+    control = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
+
+    def match(args: dict, p: str = prefix) -> bool:
+        cmd = str(args.get("command", "")).strip()
+        if control.search(cmd):
+            return False
+        return cmd == p or cmd.startswith(p + " ")
+
+    return AllowRule("run_shell", max_risk, match=match, note=f"shell commands starting with {prefix!r}")
 
 
 @dataclass(frozen=True)
@@ -153,6 +171,8 @@ class Budget:
         self._lock = threading.Lock()
 
     def charge(self, *, steps: int = 0, tokens: int = 0, cost_usd: float = 0.0) -> None:
+        if steps < 0 or tokens < 0 or cost_usd < 0:
+            raise ValueError("budget charges cannot be negative")
         with self._lock:
             self.steps += steps
             self.tokens += tokens
@@ -194,7 +214,10 @@ class Budget:
 
 
 class KillSwitch:
-    """Tripped programmatically or by creating a file (e.g. `touch STOP`)."""
+    """Tripped programmatically or by creating a file (e.g. `touch STOP`).
+
+    It latches: once tripped (by either route) it stays tripped, so deleting the stop
+    file does not re-enable the run. Only an explicit `reset()` by the operator does."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
@@ -209,9 +232,16 @@ class KillSwitch:
         if self._tripped:
             return True
         if self.path is not None and self.path.exists():
-            self.reason = f"stop file present: {self.path}"
+            self.trip(f"stop file present: {self.path}")
             return True
         return False
+
+    def reset(self) -> None:
+        """Operator action: clear a latched trip (the stop file must be gone)."""
+        if self.path is not None and self.path.exists():
+            raise RuntimeError("remove the stop file before resetting")
+        self._tripped = False
+        self.reason = ""
 
 
 GENESIS_HASH = "0" * 64
@@ -223,19 +253,30 @@ def _entry_hash(prev: str, body: dict) -> str:
 
 
 class AuditLog:
-    """Append-only JSONL log; each entry commits to the previous one's hash."""
+    """Append-only JSONL log; each entry commits to the previous one's hash.
+
+    The hash chain catches in-place edits. While the process that writes the log is
+    alive, `intact()` also catches truncation, deletion and wholesale re-chaining of
+    the file, by comparing it with what this process wrote. A process running as the
+    same OS user can still forge a consistent log after this process has exited; the
+    log is tamper-evident, not tamper-proof."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self.entries: list[dict] = []
         self._lock = threading.Lock()
         self.head = GENESIS_HASH
+        self._size = 0
+        self._last_line = ""
         if self.path and self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
+            text = self.path.read_text(encoding="utf-8")
+            for line in text.splitlines():
                 if line.strip():
                     entry = json.loads(line)
                     self.entries.append(entry)
                     self.head = entry["hash"]
+                    self._last_line = line
+            self._size = self.path.stat().st_size
 
     def append(self, event: str, **fields: Any) -> dict:
         with self._lock:
@@ -246,9 +287,30 @@ class AuditLog:
             self.head = h
             if self.path:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
+                line = json.dumps(entry, default=str)
                 with self.path.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, default=str) + "\n")
+                    f.write(line + "\n")
+                self._size += len((line + "\n").encode("utf-8"))
+                self._last_line = line
             return entry
+
+    def intact(self) -> bool:
+        """Is the file on disk exactly what this process has written to it?"""
+        if self.path is None:
+            return True
+        if not self.path.exists():
+            return self._size == 0          # nothing written yet is fine; a deleted log is not
+        try:
+            if self.path.stat().st_size != self._size:
+                return False
+            if not self._size:
+                return True
+            with self.path.open("rb") as f:
+                f.seek(max(0, self._size - len(self._last_line.encode("utf-8")) - 1))
+                tail = f.read().decode("utf-8", errors="replace").rstrip("\n")
+            return tail == self._last_line
+        except OSError:
+            return False
 
     @staticmethod
     def verify_entries(entries: list[dict]) -> tuple[bool, int | None]:
@@ -283,8 +345,16 @@ class Governor:
         self.budget = budget or Budget()
         self.kill_switch = kill_switch or KillSwitch()
         self.audit = audit or AuditLog()
-        # Invariant 1: the ceiling can be lowered but never raised above LOW.
-        self.auto_approve_up_to = Risk(min(int(auto_approve_up_to), int(MAX_AUTO_APPROVE)))
+        self.auto_approve_up_to = auto_approve_up_to
+
+    @property
+    def auto_approve_up_to(self) -> Risk:
+        return self._auto_approve_up_to
+
+    @auto_approve_up_to.setter
+    def auto_approve_up_to(self, value: Risk) -> None:
+        # Invariant 1: the ceiling can be lowered but never raised above LOW, at any time.
+        self._auto_approve_up_to = Risk(min(int(value), int(_CEILING)))
 
     def check_running(self) -> None:
         """Raise if the run must stop (kill switch or budget)."""
@@ -295,6 +365,13 @@ class Governor:
             raise BudgetExceeded(reason)
 
     def authorize(self, action: Action) -> Decision:
+        if not self.audit.intact():
+            self.kill_switch.trip("audit log was modified outside the governor")
+        args_json = json.dumps(action.args, default=str, sort_keys=True)
+        record = dict(tool=action.tool, risk=action.risk.name, actor=action.actor,
+                      description=action.description[:500], args=args_json[:2000],
+                      args_sha256=hashlib.sha256(args_json.encode("utf-8")).hexdigest(),
+                      args_truncated=len(args_json) > 2000)
         if self.kill_switch.is_tripped():
             decision = Decision(False, f"kill switch: {self.kill_switch.reason}", "governor")
         elif (reason := self.budget.exhausted_reason()) is not None:
@@ -302,13 +379,14 @@ class Governor:
         elif action.risk <= self.auto_approve_up_to:
             decision = Decision(True, f"auto-approved ({action.risk.name})", "governor")
         else:
-            decision = self.approver.approve(action)
-        self.audit.append(
-            "authorize", tool=action.tool, risk=action.risk.name, actor=action.actor,
-            description=action.description[:500],
-            args=json.dumps(action.args, default=str)[:2000],
-            allowed=decision.allowed, reason=decision.reason, approver=decision.approver,
-        )
+            try:
+                decision = self.approver.approve(action)
+            except BaseException as e:       # an approver failure is still a decision on record
+                self.audit.append("authorize", **record, allowed=False,
+                                  reason=f"approver raised {type(e).__name__}: {e}"[:500], approver="governor")
+                raise
+        self.audit.append("authorize", **record, allowed=decision.allowed, reason=decision.reason,
+                          approver=decision.approver)
         return decision
 
     def child(self, fraction: float = 0.25, max_steps: int | None = None) -> "Governor":

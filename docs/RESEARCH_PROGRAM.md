@@ -60,17 +60,17 @@ phases complete, so that the pre-registered run uses one code version.
 
 | Finding | Severity | Status |
 |---|---|---|
-| Failed tool calls (missing file, failed fetch) count as grounding evidence for FACT | high | open |
+| Failed tool calls (missing file, failed fetch) count as grounding evidence for FACT | high | **fixed**: a failed call is recorded as a note (`tests/test_hardening.py`) |
 | Inference cap applied only at assertion; `update_confidence` ignores it; lowering a premise does not re-cap dependents | medium | open |
 | `update_confidence(NaN)` sets 1.0, even on refuted claims; refuting needs no evidence | medium | open |
 | Promotion to FACT ignores `needs_review` (a claim whose premise was refuted can be promoted) | medium | open |
 | `Ledger.from_dict` re-checks nothing; a stale counter makes new ids overwrite old claims | medium | open |
 | Ledger reads are not locked (1,281 "dictionary changed size" errors in a concurrency probe) | medium | open |
-| The auto-approval clamp runs only in `__init__`; assigning the attribute later auto-approves CRITICAL | high (in-process only) | open |
-| A shell prefix rule (`--allow-shell-prefix pytest`) also pre-authorizes `pytest && git push ...` | high | open |
-| The kill switch does not latch: deleting STOP re-enables authorization | medium | open |
-| `charge()` accepts negative amounts; wall-clock budget resets on resume | medium | open |
-| Audit log: truncation and full re-chaining verify as intact; a raising approver logs nothing; args cut at 2,000 chars | medium | open |
+| The auto-approval clamp runs only in `__init__`; assigning the attribute later auto-approves CRITICAL | high (in-process only) | **fixed**: the ceiling is enforced on every assignment and read from a private copy |
+| A shell prefix rule (`--allow-shell-prefix pytest`) also pre-authorizes `pytest && git push ...` | high | **fixed**: prefix rules match whole words and refuse any shell control syntax |
+| The kill switch does not latch: deleting STOP re-enables authorization | medium | **fixed**: it latches until an explicit operator reset |
+| `charge()` accepts negative amounts; wall-clock budget resets on resume | medium | negative charges **fixed**; the resume reset is open |
+| Audit log: truncation and full re-chaining verify as intact; a raising approver logs nothing; args cut at 2,000 chars | medium | **fixed while the writer is alive** (any modification of the file trips the kill switch; approver failures are logged; the full arguments are hashed). A same-user process can still forge a consistent log after the writer exits |
 | Auto-approved `run_python` can rewrite the run's own oversight files | high | open; needs an OS sandbox or approval |
 | Memory search returns nothing for non-ASCII queries | low | open |
 

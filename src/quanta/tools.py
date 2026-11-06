@@ -171,8 +171,10 @@ class ToolRegistry:
             result = ToolResult(f"{type(e).__name__}: {e}", is_error=True)
         if tool.evidence_kind and not result.data.get("no_evidence"):
             text = result.text()
+            # A failed call is recorded, but only as a note: it cannot ground a fact.
+            kind = "note" if result.is_error else tool.evidence_kind
             ev = ctx.ledger.add_evidence(
-                tool.evidence_kind, f"{name}({_short(args)}){' [error]' if result.is_error else ''}",
+                kind, f"{name}({_short(args)}){' [error]' if result.is_error else ''}",
                 {"tool": name, "args": args, "is_error": result.is_error,
                  "output_sha256": hashlib.sha256(text.encode()).hexdigest(), "output_head": text[:600],
                  **{k: v for k, v in result.data.items() if k in ("exit_code", "url")}})
