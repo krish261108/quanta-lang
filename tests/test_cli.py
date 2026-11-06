@@ -5,7 +5,7 @@ from quanta.governance import Action, AuditLog, Governor, Risk
 
 
 def test_discover_prints_full_report(capsys):
-    assert main(["discover", "--seed", "30002"]) == 0
+    assert main(["discover", "--seed", "50002"]) == 0
     out = capsys.readouterr().out
     for heading in ("## Result", "## Established facts", "## Inferences", "## Speculation",
                     "## Experiment trace", "## Grading", "## Reproducibility"):

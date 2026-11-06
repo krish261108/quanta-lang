@@ -205,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_resume)
 
     p = sub.add_parser("discover", help="automated discovery on one benchmark task (offline)")
-    p.add_argument("--seed", type=int, default=30_000)
+    p.add_argument("--seed", type=int, default=50_000)   # outside every benchmark split
     p.add_argument("--genome")
     p.set_defaults(fn=cmd_discover)
 

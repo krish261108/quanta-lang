@@ -1,5 +1,11 @@
 # Self-improvement: protocol and results
 
+> **Correction (re-verification).** The absolute numbers below were produced by a code version that was never
+> committed and do not reproduce from the repository. Re-running the test comparisons with the committed code
+> ([experiments/reverify_legacy/results.json](../experiments/reverify_legacy/results.json)) gives initial 0.756 -> final 0.798
+> (Δ +0.042, CI [+0.027, +0.057]); the ablations reproduce (Student-t −0.011, falsification −0.039). The
+> random-search control and the learning curve have not been re-run.
+
 ## What is being improved
 
 The **genome** (`src/quanta/genome.py`): the bounded set of strategy parameters that controls
