@@ -97,10 +97,16 @@ class _Worker:
             self._send({"cmd": "exit"})
         except (OSError, ValueError):
             pass
+        for stream in (self.proc.stdin, self.proc.stdout):
+            try:
+                stream.close()
+            except (OSError, ValueError):     # a killed worker leaves a broken pipe behind
+                pass
         try:
             self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+            self.proc.wait()
 
 
 def run_isolated(config: dict, jobs: list[Job], *, workers: int = 4, pythonpath: str = SRC,
