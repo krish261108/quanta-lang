@@ -118,6 +118,24 @@ The reviewer and the evaluation code are outside the loop's authority.
 * The reviewer's "validation" gate re-checks the proposer's own selection data, so it is
   selection-biased by construction. The held-out and transfer gates are the real tests.
 
+## Reproducing the experiment
+
+```bash
+# one replication, all phases (resumable: completed phases are skipped)
+python experiments/capability_acquisition/run.py --replication 0 --workers 4
+python experiments/capability_acquisition/exploratory.py --replication 0
+python experiments/capability_acquisition/audit_replay.py --replication 0 --phase acquire
+python experiments/capability_acquisition/report.py          # writes RESULTS.md from the result files
+```
+
+On 4 cores one replication takes several hours, most of it in the final evaluation of the
+two conditions that run program search inside every task. Everything is deterministic in
+(code, configuration, task seeds): an interrupted acquisition phase is replayed from the
+start, reusing only evaluation records that cover exactly the same tasks, and the runner
+checks that the replay took the same decisions. The real datasets are downloaded once and
+checked against pinned sha256 hashes; per-task records are committed gzip-compressed
+(`pack_results.py`), and the analysis reads them from a fresh clone.
+
 ## Results
 
 Pending the pre-registered runs (see the experiment directory); this section is filled in
