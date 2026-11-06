@@ -90,3 +90,39 @@ def test_failed_tool_calls_cannot_ground_facts(tmp_path):
     out = reg.execute("assert_claim", {"statement": "the moon is made of cheese", "status": "fact",
                                        "confidence": 0.99, "evidence_ids": [eid]}, ctx)
     assert "downgraded" in out.text()
+
+
+def test_agents_cannot_call_tools_outside_their_role(tmp_path):
+    from quanta.agent import Agent
+    from quanta.llm import ScriptedModel
+    (tmp_path / "keep.txt").write_text("x")
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore())
+    model = ScriptedModel([{"tool_calls": [("write_file", {"path": "keep.txt", "content": "overwritten"})]},
+                           {"text": "done"}])
+    agent = Agent(model=model, registry=default_registry(), ctx=ctx, role="generalist", tool_names=["read_file"])
+    res = agent.run("try to write")
+    assert (tmp_path / "keep.txt").read_text() == "x"
+    assert res.tool_log[0]["is_error"]
+    assert any(e["event"] == "tool_refused" for e in ctx.governor.audit.entries)
+
+
+def test_provider_side_tool_calls_are_audited(tmp_path):
+    from quanta.agent import Agent
+    from quanta.llm import ScriptedModel
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore())
+    model = ScriptedModel([{"text": "searched", "server_tool_calls": [("web_search", {"query": "q"})]}])
+    Agent(model=model, registry=default_registry(), ctx=ctx, role="generalist").run("search")
+    rec = [e for e in ctx.governor.audit.entries if e["event"] == "server_tool"]
+    assert rec and rec[0]["tool"] == "web_search" and "not pre-authorized" in rec[0]["note"]
+
+
+def test_only_independently_verified_facts_count_as_verified_memory():
+    from quanta.solver import independently_verified
+    led = Ledger()
+    obs = led.add_evidence("execution", "ran it")
+    self_grounded = led.assert_claim("a", "fact", 0.9, evidence=[obs.id])
+    assert not independently_verified(led, self_grounded)
+    inf = led.assert_claim("b", "inference", 0.8, evidence=[obs.id])
+    ver = led.add_evidence("verification", "verifier supported b", {"grounding": [obs.id]})
+    led.promote_to_fact(inf.id, ver.id)
+    assert independently_verified(led, led.claims[inf.id])

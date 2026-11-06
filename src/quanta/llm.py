@@ -57,6 +57,9 @@ class ModelResponse:
     cost_usd: float = 0.0
     model: str = ""
     refusal_category: str | None = None
+    # Tools the model provider ran itself (web search/fetch). They never pass through
+    # the governor, so they cannot be pre-authorized; the agent records them afterwards.
+    server_tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class Model(Protocol):
@@ -167,12 +170,15 @@ class AnthropicModel:
             convo = [*messages, {"role": "assistant", "content": list(content)}]
         text = "".join(b.text for b in content if getattr(b, "type", None) == "text")
         calls = [ToolCall(b.id, b.name, dict(b.input)) for b in content if getattr(b, "type", None) == "tool_use"]
+        server_calls = [ToolCall(getattr(b, "id", ""), getattr(b, "name", ""), dict(getattr(b, "input", {}) or {}))
+                        for b in content if getattr(b, "type", None) == "server_tool_use"]
         refusal = None
         if resp.stop_reason == "refusal" and getattr(resp, "stop_details", None):
             refusal = getattr(resp.stop_details, "category", None) or "unspecified"
         return ModelResponse(text=text, tool_calls=calls, stop_reason=resp.stop_reason or "end_turn",
                              content=content, usage=usage, cost_usd=estimate_cost(self.name, usage),
-                             model=getattr(resp, "model", self.name), refusal_category=refusal)
+                             model=getattr(resp, "model", self.name), refusal_category=refusal,
+                             server_tool_calls=server_calls)
 
 
 Script = Callable[[str, list[dict], list[dict]], dict]
@@ -211,8 +217,13 @@ class ScriptedModel:
             call = ToolCall(f"toolu_{next(self._ids)}", name, dict(inp))
             calls.append(call)
             content.append({"type": "tool_use", "id": call.id, "name": name, "input": call.input})
+        server_calls = []
+        for name, inp in spec.get("server_tool_calls", []):
+            call = ToolCall(f"srvtoolu_{next(self._ids)}", name, dict(inp))
+            server_calls.append(call)
+            content.append({"type": "server_tool_use", "id": call.id, "name": name, "input": call.input})
         stop = spec.get("stop_reason") or ("tool_use" if calls else "end_turn")
         usage = Usage(input_tokens=spec.get("input_tokens", 100), output_tokens=spec.get("output_tokens", 50))
         return ModelResponse(text=spec.get("text", ""), tool_calls=calls, stop_reason=stop,
                              content=content, usage=usage, cost_usd=0.0, model=self.name,
-                             refusal_category=spec.get("refusal_category"))
+                             refusal_category=spec.get("refusal_category"), server_tool_calls=server_calls)

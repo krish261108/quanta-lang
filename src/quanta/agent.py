@@ -134,6 +134,10 @@ class Agent:
                 return AgentResult(last_text, f"model error: {e}", steps, None, tool_log, _dump(messages))
             steps += 1
             self.ctx.governor.budget.charge(steps=1, tokens=resp.usage.total, cost_usd=resp.cost_usd)
+            for sc in resp.server_tool_calls:      # run by the provider: on record, not pre-authorized
+                self.ctx.governor.audit.append("server_tool", tool=sc.name, actor=self.ctx.agent,
+                                               args=json.dumps(sc.input, default=str)[:2000],
+                                               note="executed by the model provider; not pre-authorized")
             messages.append({"role": "assistant", "content": resp.content})
             last_text = resp.text or last_text
             if resp.stop_reason == "refusal":
@@ -145,7 +149,7 @@ class Agent:
                                           "re-issue it with a smaller input", is_error=True)
                                for _ in resp.tool_calls]
                 else:
-                    results = self.registry.execute_many([(c.name, c.input) for c in resp.tool_calls], self.ctx)
+                    results = self._execute_allowed(resp.tool_calls)
                 blocks = []
                 submitted = None
                 for call, res in zip(resp.tool_calls, results):
@@ -169,6 +173,24 @@ class Agent:
                 continue
             return AgentResult(last_text, "end_turn", steps, None, tool_log, _dump(messages))
         return AgentResult(last_text, "max_steps", steps, None, tool_log, _dump(messages))
+
+
+    def _execute_allowed(self, calls) -> list[ToolResult]:
+        """Run the calls this role may make; refuse (and audit) the others. The model only
+        sees its role's tool schemas, but it can still name any tool."""
+        allowed = set(self.tool_names)
+        ok = [(i, c) for i, c in enumerate(calls) if c.name in allowed]
+        done = self.registry.execute_many([(c.name, c.input) for _, c in ok], self.ctx) if ok else []
+        out: list[ToolResult | None] = [None] * len(calls)
+        for (i, _), r in zip(ok, done):
+            out[i] = r
+        for i, c in enumerate(calls):
+            if out[i] is None:
+                self.ctx.governor.audit.append("tool_refused", tool=c.name, actor=self.ctx.agent,
+                                               reason=f"not available to role {self.role}")
+                out[i] = ToolResult(f"tool {c.name!r} is not available to the {self.role} role; available: "
+                                    f"{', '.join(self.tool_names)}", is_error=True)
+        return out
 
 
 def _dump(messages: list[dict]) -> list[dict]:
