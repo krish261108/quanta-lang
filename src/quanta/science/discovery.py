@@ -267,10 +267,11 @@ class DiscoveryLoop:
             se, ok = 0.0, True
             for x, r in zip(grid, ref):
                 v = fits[name].predict(x)
-                if not (math.isfinite(v) and math.isfinite(r)):
+                d = v - r
+                if not math.isfinite(d) or abs(d) > 1e150:
                     ok = False
                     break
-                se += (v - r) ** 2
+                se += d * d
             if ok and math.sqrt(se / len(grid)) <= self.POOL_TOL * sigma:
                 mass += p
         return min(1.0, mass)

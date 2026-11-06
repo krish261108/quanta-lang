@@ -69,23 +69,37 @@ class EvaluationService:
         self.workers = workers
         self._cache: dict[tuple, list[dict]] = {}
         self.seen_seeds: set[int] = set()
+        # Every task seed evaluated by anyone but the reviewer, recorded by the service itself
+        # (the leakage gate checks this, not what the proposer reports about itself).
+        self.unreviewed_seeds: set[int] = set()
         self.validations: dict[str, dict] = {}
 
+    def proposer_view(self) -> "ProposerView":
+        return ProposerView(self)
+
     def records(self, config: dict, split: str, n: int, block: int = 0, *, with_observations=False,
-                workers: int | None = None, use_cache: bool = True, limit: int | None = None) -> list[dict]:
+                workers: int | None = None, use_cache: bool = True, limit: int | None = None,
+                caller: str = "proposer") -> list[dict]:
         """Records for tasks [block*n, block*n + n) of `split` (only the first `limit`
         of them if given)."""
         key = (config_hash(config), split, n, block, with_observations, limit)
+        task_list = _block_tasks(split, n, block, self.replication)[:limit]
+        if caller != "reviewer":
+            self.unreviewed_seeds.update(t.seed for t in task_list)
         if use_cache and key in self._cache:
             return self._cache[key]
-        task_list = _block_tasks(split, n, block, self.replication)[:limit]
         suffix = "" if use_cache else "-rerun"
         path = self.log_dir / f"{split}-r{self.replication}-b{block}-n{n}-{key[0]}{suffix}.jsonl"
         if use_cache and not with_observations and path.exists():
             # Evaluation is deterministic in (config, tasks), so a complete record file written
             # earlier for exactly these tasks is the result (used to replay an interrupted run).
-            stored = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-            if [r.get("seed") for r in stored] == [t.seed for t in task_list]:
+            # Anything unreadable or incomplete is re-evaluated instead.
+            try:
+                stored = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+                          if line.strip()]
+            except (ValueError, OSError):
+                stored = []
+            if stored and [r.get("seed") for r in stored] == [t.seed for t in task_list]:
                 self._cache[key] = stored
                 return stored
         recs = evaluate(config, split, len(task_list), replication=self.replication,
@@ -109,13 +123,33 @@ class EvaluationService:
         rb = self.records(base, "validation", n, block)
         rc = self.records(cand, "validation", n, block)
         self.seen_seeds.update(r["seed"] for r in rb)
-        cmp = paired_bootstrap([r["score"] for r in rb], [r["score"] for r in rc],
-                               n_boot=GATES["n_boot"], confidence=GATES["confidence"], seed=7)
+        cmp = Reviewer._paired(rb, rc)            # exactly the statistic the reviewer recomputes
         vid = f"val-{config_hash(base)}-{config_hash(cand)}-b{block}"
-        self.validations[vid] = {"base": rb, "cand": rc}
-        return {"validation_id": vid, "mean_delta": cmp.mean_delta, "ci_low": cmp.ci_low, "ci_high": cmp.ci_high,
+        self.validations[vid] = {"base": rb, "cand": rc, "base_hash": config_hash(base),
+                                 "cand_hash": config_hash(cand)}
+        return {"validation_id": vid, "mean_delta": cmp["mean_delta"], "ci_low": cmp["ci_low"],
+                "ci_high": cmp["ci_high"],
                 "per_task": [{"task_id": a["task_id"], "base": a["score"], "cand": b["score"]}
                              for a, b in zip(rb, rc)]}
+
+
+class ProposerView:
+    """What the acquisition loop is given: training solves (no grades) and validation
+    comparisons. (An in-process object can still reach the service behind it; the
+    service therefore records every evaluation it runs for anyone but the reviewer.)"""
+
+    def __init__(self, service: EvaluationService) -> None:
+        self._service = service
+
+    def solve_training(self, config: dict, n: int, block: int = 0) -> list[dict]:
+        return self._service.solve_training(config, n, block)
+
+    def validate(self, base: dict, cand: dict, n: int, block: int = 0) -> dict:
+        return self._service.validate(base, cand, n, block)
+
+    @property
+    def seen_seeds(self) -> set[int]:
+        return set(self._service.unreviewed_seeds)
 
 
 @dataclass
@@ -190,27 +224,32 @@ class Reviewer:
                                                                                  "deterministic", "runtime_s")},
                  "passed")
 
-        # R7 leakage: the proposer saw only decision-split training/validation seeds.
+        # R7 leakage: everything evaluated outside the reviewer (as recorded by the service
+        # itself, plus whatever the proposer reports) lies in train/validation.
         allowed = {s for s in DECISION_SPLITS if s in ("train", "validation")}
         ranges = [(SPLITS[s] + REPLICATION_STRIDE * self.service.replication,
                    SPLITS[s] + REPLICATION_STRIDE * self.service.replication + SPLIT_WIDTH) for s in allowed]
-        stray = [s for s in proposer_seen_seeds if not any(lo <= s < hi for lo, hi in ranges)]
+        seen = set(proposer_seen_seeds) | self.service.unreviewed_seeds
+        stray = [s for s in seen if not any(lo <= s < hi for lo, hi in ranges)]
         gate("no_leakage", not stray, {"seeds_outside_train_validation": len(stray)}, 0)
 
         if not all(g["passed"] for g in gates.values()):
             return self._finish(rid, False, gates, reasons, artifact, block, t0, {})
 
-        # R2 validation, recomputed from the service's stored records.
+        # R2 validation, recomputed from the service's stored records of exactly this pair.
         val = self.service.validations.get(validation_id)
         if val is None:
             gate("validation", False, "validation records not found", "present")
+            return self._finish(rid, False, gates, reasons, artifact, block, t0, {})
+        if (val.get("base_hash"), val.get("cand_hash")) != (config_hash(base), config_hash(cand)):
+            gate("validation", False, "validation records belong to a different pair", "this pair")
             return self._finish(rid, False, gates, reasons, artifact, block, t0, {})
         cv = self._paired(val["base"], val["cand"])
         gate("validation", cv["ci_low"] > GATES["validation_ci_low"], cv, f"ci_low > {GATES['validation_ci_low']}")
 
         # R3/R4 held-out: a fresh gate block.
-        rb = self.service.records(base, "gate", GATES["n_gate"], block)
-        rc = self.service.records(cand, "gate", GATES["n_gate"], block)
+        rb = self.service.records(base, "gate", GATES["n_gate"], block, caller="reviewer")
+        rc = self.service.records(cand, "gate", GATES["n_gate"], block, caller="reviewer")
         ch = self._paired(rb, rc)
         gate("heldout", ch["ci_low"] > GATES["heldout_ci_low"], ch, f"ci_low > {GATES['heldout_ci_low']}")
         fam_b = [r for r in rb if r["kind"] == "familiar"]
@@ -220,8 +259,8 @@ class Reviewer:
              f"ci_low > {GATES['familiar_regression_ci_low']}")
 
         # R5 transfer: a fresh block of regime-shifted gap tasks.
-        tb = self.service.records(base, "gate_transfer", GATES["n_transfer"], block)
-        tc = self.service.records(cand, "gate_transfer", GATES["n_transfer"], block)
+        tb = self.service.records(base, "gate_transfer", GATES["n_transfer"], block, caller="reviewer")
+        tc = self.service.records(cand, "gate_transfer", GATES["n_transfer"], block, caller="reviewer")
         ct = self._paired(tb, tc)
         gate("transfer", ct["ci_low"] > GATES["transfer_ci_low"], ct, f"ci_low > {GATES['transfer_ci_low']}")
 
@@ -229,7 +268,7 @@ class Reviewer:
         # a different worker count; per-task scores must be identical.
         k = GATES["n_repro"]
         rc2 = self.service.records(cand, "gate", GATES["n_gate"], block, workers=max(1, self.workers - 1),
-                                   use_cache=False, limit=k)
+                                   use_cache=False, limit=k, caller="reviewer")
         same = [a["score"] for a in rc[:k]] == [b["score"] for b in rc2]
         gate("reproducible", same, {"identical_per_task_scores": same, "n": len(rc2)}, True)
 

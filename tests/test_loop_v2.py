@@ -55,3 +55,35 @@ def test_confident_wrong_answers_are_diagnosed_from_the_loops_view():
 def test_solver_errors_count_as_failures():
     d = diagnose("t", {"error": "TimeoutError: worker killed", "answer": "error"}, [])
     assert d is not None and d.mode == "solver_error"
+
+
+def test_leakage_gate_sees_evaluations_the_proposer_did_not_report(tmp_path, monkeypatch):
+    from quanta.bench import acquisition as A
+    from quanta.bench import review as R
+    from quanta.genome import Genome
+    from quanta.science.toolkit import Toolkit
+    monkeypatch.setitem(R.GATES, "n_gate", 3)
+    monkeypatch.setitem(R.GATES, "n_transfer", 3)
+    monkeypatch.setitem(R.GATES, "n_repro", 1)
+    svc = R.EvaluationService(tmp_path / "e", workers=1)
+    base = Toolkit(Genome(), []).to_config()
+    svc.records(base, "gate", 2, block=0)                 # a direct, unreported held-out evaluation
+    art = build_artifact("cap-0001", 1, Model((unary("E", X),)), [[-0.3]], name="t", description="d")
+    cand = {"genome": base["genome"], "capabilities": [art]}
+    d = R.Reviewer(svc, tmp_path / "r", workers=1).review(base, cand, art, "missing", set())
+    assert not d.gates["no_leakage"]["passed"]
+    assert A.make_task("gate", 0).seed in svc.unreviewed_seeds
+
+
+def test_reviewer_rejects_validation_records_of_another_pair(tmp_path, monkeypatch):
+    from quanta.bench import review as R
+    from quanta.genome import Genome
+    from quanta.science.toolkit import Toolkit
+    svc = R.EvaluationService(tmp_path / "e", workers=1)
+    base = Toolkit(Genome(), []).to_config()
+    art = build_artifact("cap-0001", 1, Model((unary("E", X),)), [[-0.3]], name="t", description="d")
+    other = build_artifact("cap-0002", 1, Model((unary("S", X),)), [[1.0, 0.0]], name="t", description="d")
+    v = svc.validate(base, {"genome": base["genome"], "capabilities": [other]}, 3)
+    cand = {"genome": base["genome"], "capabilities": [art]}
+    d = R.Reviewer(svc, tmp_path / "r", workers=1).review(base, cand, art, v["validation_id"], set())
+    assert not d.gates["validation"]["passed"] and "different pair" in d.gates["validation"]["value"]
