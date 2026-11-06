@@ -162,3 +162,27 @@ def test_sandbox_fails_closed_without_privileges(tmp_path, monkeypatch):
     ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore(), sandbox_user="nobody")
     r = default_registry().execute("run_python", {"code": "print(1)"}, ctx)
     assert r.is_error and "refusing to run unsandboxed" in r.text()
+
+
+def test_audit_check_has_no_race_with_parallel_appends(tmp_path):
+    import threading
+    g = Governor(audit=AuditLog(tmp_path / "audit.jsonl"))
+    denied = []
+
+    def worker():
+        for _ in range(40):
+            if not g.authorize(Action("read_file", {"path": "x" * 500}, Risk.READ_ONLY)).allowed:
+                denied.append(1)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not denied and not g.kill_switch.is_tripped()
+    assert g.audit.intact() and g.audit.verify()[0]
+
+
+def test_shell_prefix_rule_ignores_surrounding_whitespace():
+    approver = AllowlistApprover([shell_prefix_rule("pytest ")])
+    assert approver.approve(Action("run_shell", {"command": "pytest -q"}, Risk.HIGH)).allowed

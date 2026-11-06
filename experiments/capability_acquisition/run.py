@@ -381,6 +381,49 @@ def contrast(a_recs: dict, b_recs: dict) -> dict:
     return out
 
 
+def diagnosis_consistency(acq_dir: Path) -> dict:
+    """F8, corrected after the independent review: capability building blocks in a
+    research finding are expanded into their own structure before matching, and each
+    task counts once (its first kept finding). The loop's own figure is also reported."""
+    import re
+    from quanta.capabilities.acquire import MODE_FEATURES
+    blocks = {}
+    reg = acq_dir / "registry.jsonl"
+    if reg.exists():
+        for line in reg.read_text().splitlines():
+            e = json.loads(line)
+            if e["event"] == "propose":
+                for i, t in enumerate(e["record"]["artifact"]["terms"]):
+                    blocks[f"{e['capability_id']}.t{i}"] = t.get("structure", "")
+    pattern = re.compile(r"<([^<>]+)>")
+
+    def expand(key: str) -> str:
+        for _ in range(5):
+            new = pattern.sub(lambda m: blocks.get(m.group(1), m.group(0)), key)
+            if new == key:
+                break
+            key = new
+        return key
+
+    seen, hits, total = set(), 0, 0
+    per_mode: dict = defaultdict(lambda: [0, 0])
+    for line in (acq_dir / "events.jsonl").read_text().splitlines():
+        e = json.loads(line)
+        if e.get("event") != "research" or not e.get("kept") or e["task"] in seen:
+            continue
+        check = MODE_FEATURES.get(e["mode"])
+        if check is None:
+            continue
+        seen.add(e["task"])
+        ok = bool(check(expand(e["kept"])))
+        hits += ok
+        total += 1
+        per_mode[e["mode"]][0] += ok
+        per_mode[e["mode"]][1] += 1
+    return {"checked_tasks": total, "consistent": hits, "rate": round(hits / total, 3) if total else None,
+            "per_mode": {m: {"consistent": a, "checked": b} for m, (a, b) in per_mode.items()}}
+
+
 def hypotheses(res: dict) -> dict:
     """The pre-registered decision rules (PREREGISTRATION.md, section 5)."""
     v = res["vs_C0"].get(PRIMARY, {})
@@ -403,7 +446,10 @@ def phase_analyze(out: Path, rep: int) -> dict:
     final = out / "final"
     conds = json.loads((final / "summary.json").read_text())["conditions"]
     splits = list(FINAL_SPLITS) + ["external"]
-    recs = {c: {s: read_jsonl(final / c / f"{s}.jsonl") for s in splits if (final / c / f"{s}.jsonl").exists()}
+    def have(path: Path) -> bool:                    # raw file, or the committed gzip copy
+        return path.exists() or path.with_name(path.name + ".gz").exists()
+
+    recs = {c: {s: read_jsonl(final / c / f"{s}.jsonl") for s in splits if have(final / c / f"{s}.jsonl")}
             for c in conds}
     res: dict = {"replication": rep, "descriptive": {}, "vs_C0": {}, "pairs": {}, "by_family": {}}
     for c in conds:
@@ -432,6 +478,7 @@ def phase_analyze(out: Path, rep: int) -> dict:
     res["random_control"] = json.loads((out / "random" / "summary.json").read_text())
     for k in ("acquisition", "random_control"):        # keep analysis.json readable; full copies stay in summary.json
         res[k] = {kk: res[k][kk] for kk in ("active", "report", "seconds", "proposer_seen_seeds", "memory")}
+    res["diagnosis_consistency_corrected"] = diagnosis_consistency(out / "acquire")
     fresh = out / "fresh" / "summary.json"
     res["fresh_environment"] = json.loads(fresh.read_text()) if fresh.exists() else None
     res["hypotheses"] = hypotheses(res)

@@ -24,6 +24,25 @@ DEVIATIONS = [
            "never wrote (it stored Crand - C2), so H5 would have been 'not supported' whenever the random "
            "control had an ACTIVE capability, regardless of the data. Fixed before the analysis phase ran; "
            "the decision rule itself is unchanged."),
+    ("D4", "Analysis fixes from the independent correctness review, made before the analysis phase ran: "
+           "the analysis now also reads the committed gzip copies of per-task records (otherwise a fresh "
+           "clone compared nothing), and the F8 diagnosis-consistency measure is recomputed with capability "
+           "building blocks expanded and each task counted once (the loop's own, biased figure is kept "
+           "alongside)."),
+]
+KNOWN_LOOP_DEFECTS = [
+    "a validated candidate that is deferred for lack of review budget is never reconsidered "
+    "(at most one acceptance per round)",
+    "the confident-wrong-answer failure detector never fires in the loop (it read the task kind, which "
+    "the proposer is not shown, instead of the answer kind)",
+    "duplicates of an ACTIVE capability expressed through its building block are not recognized as "
+    "duplicates",
+    "starting values can be attached to the wrong term when the search returns a structure's terms in "
+    "a different order",
+    "the random control occasionally proposes structures of size 4 (about 2.5% of draws; registered: 1-3)",
+    "the unit-test determinism check can fail an artifact when its first trial is skipped",
+    "with starting values removed (C2noinit), library parameters get a single start, so F3 also measures "
+    "the lack of a multi-start, not only memorized values",
 ]
 
 
@@ -99,8 +118,13 @@ def rep_section(rep: int) -> list[str]:
         out += ["", "ACTIVE capabilities: " + (", ".join(f"`{a['capability_id']}` `{a['structure']}`"
                                                         for a in acq["active"]) or "none"), ""]
         dc = rep_.get("diagnosis_consistency") or {}
-        out += [f"Diagnosis consistency (F8): {dc.get('consistent')}/{dc.get('checked')} research findings "
-                f"matched the diagnosed failure mode (rate {dc.get('rate')}).", ""]
+        out += [f"Diagnosis consistency (F8), loop's own figure: {dc.get('consistent')}/{dc.get('checked')} "
+                f"research findings matched the diagnosed failure mode (rate {dc.get('rate')}).", ""]
+        if an and an.get("diagnosis_consistency_corrected"):
+            dcc = an["diagnosis_consistency_corrected"]
+            out += [f"Diagnosis consistency (F8), corrected (D4): {dcc['consistent']}/{dcc['checked_tasks']} "
+                    f"tasks (rate {dcc['rate']}); per mode: " + ", ".join(
+                        f"{m} {v['consistent']}/{v['checked']}" for m, v in dcc["per_mode"].items()), ""]
         rc = acq.get("replay_check") or []
         for c in rc:
             out.append(f"Replay check (D1): the replay reproduced the interrupted attempt's "
@@ -176,6 +200,11 @@ def main() -> int:
             lines += rep_section(rep)
     lines += ["## Deviations from the pre-registration", ""]
     lines += [f"* **{k}.** {v}" for k, v in DEVIATIONS]
+    lines += ["", "## Known defects of the system under test (found by independent review; not fixed in "
+                  "the registered runs)", "",
+              "These belong to the pre-registered acquisition loop, so the registered runs keep them; most of "
+              "them make the loop weaker, not stronger. They are fixed in the next version of the loop.", ""]
+    lines += [f"* {d}" for d in KNOWN_LOOP_DEFECTS]
     (HERE / "RESULTS.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
