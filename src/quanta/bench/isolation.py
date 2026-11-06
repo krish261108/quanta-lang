@@ -3,8 +3,12 @@
 PROTECTED. The solver (with whatever capabilities it is being evaluated with)
 runs in worker subprocesses (`python -m quanta.science.worker`). This process
 keeps the tasks, answers measurement requests, enforces the measurement budget
-(its own count is authoritative), and grades. Workers never receive seeds,
-parameters or truth; they cannot call or modify the grader, which lives here.
+(its own count is authoritative), and grades. Workers receive measurements, the
+points to predict, the budget, an opaque job token and a solver seed; never task
+identifiers, parameters or truth. They cannot call or modify the grader, which
+lives here. (The solver seed is a deterministic function of the task seed, so a
+malicious worker that also imported the evaluator could still search for its task;
+only an OS-level boundary closes that.)
 
 Residual risk, stated plainly: workers run as the same OS user, so code that is
 allowed to execute arbitrary Python in a worker could read files. Capability
@@ -14,6 +18,7 @@ sandbox; see docs/CAPABILITY_ACQUISITION.md.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import queue
@@ -39,6 +44,7 @@ class Job:
 
 class _Worker:
     def __init__(self, config: dict, pythonpath: str) -> None:
+        self._tokens = itertools.count(1)
         env = {**os.environ, "PYTHONPATH": pythonpath, "PYTHONDONTWRITEBYTECODE": "1"}
         self.proc = subprocess.Popen([sys.executable, "-m", "quanta.science.worker"], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env,
@@ -68,7 +74,10 @@ class _Worker:
         used = 0
         t0 = time.perf_counter()
         try:
-            self._send({"cmd": "solve", "task_id": job.task_id, "domain": list(job.instrument.domain),
+            # The worker gets an opaque per-job token, not the task's identifier (which names the
+            # split and index); results are matched back by the parent.
+            token = f"job-{next(self._tokens)}"
+            self._send({"cmd": "solve", "task_id": token, "domain": list(job.instrument.domain),
                         "budget": job.budget, "seed": job.seed, "eval_x": list(job.eval_x)})
             while True:
                 msg = self._recv()
@@ -84,6 +93,9 @@ class _Worker:
                     else:
                         self._send({"y": job.instrument.measure(float(msg["x"]))})
                 elif msg.get("cmd") == "result":
+                    if msg.get("task_id") != token:
+                        raise RuntimeError("worker answered for a different job")
+                    msg["task_id"] = job.task_id
                     msg["measurements_used"] = used          # authoritative count
                     msg["seconds"] = round(time.perf_counter() - t0, 3)
                     return msg

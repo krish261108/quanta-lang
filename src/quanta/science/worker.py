@@ -11,7 +11,8 @@ Speaks a line-delimited JSON protocol on stdin/stdout with the trusted evaluator
                                   input actually measured) or {"error": "..."}
     <- {"cmd": "result", "task_id": "...", ...}
 
-The worker never receives a task's seed, parameters or truth: only measurements.
+The worker never receives a task's identifier, parameters or truth: only an opaque job
+token, measurements, the points to predict, the budget and a solver seed.
 """
 from __future__ import annotations
 
