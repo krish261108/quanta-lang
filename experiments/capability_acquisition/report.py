@@ -20,6 +20,10 @@ DEVIATIONS = [
            "interrupted attempt's (`replay_check`)."),
     ("D2", "Exploratory analyses X1-X3 (EXPLORATORY_PLAN.md) were added during the acquisition phase, "
            "before any report-only split was evaluated. They cannot change a pre-registered verdict."),
+    ("D3", "An independent review found that the analysis code read the C2 - Crand contrast under a key it "
+           "never wrote (it stored Crand - C2), so H5 would have been 'not supported' whenever the random "
+           "control had an ACTIVE capability, regardless of the data. Fixed before the analysis phase ran; "
+           "the decision rule itself is unchanged."),
 ]
 
 

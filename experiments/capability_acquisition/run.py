@@ -412,10 +412,12 @@ def phase_analyze(out: Path, rep: int) -> dict:
         if c != BASE:
             res["vs_C0"][c] = contrast(recs[BASE], recs[c])
             res["by_family"][c] = {s: by_family(recs[BASE][s], recs[c][s]) for s in recs[c] if s != "external"}
-    for a, b in [(PRIMARY, "Crand_S0_random_control"), (PRIMARY, "Coracle_S0_designer"),
-                 (PRIMARY, "C2noinit_S0_acquired_without_inits"), ("C1_S0_construct", "C3_S0_acquired_construct")]:
-        if a in recs and b in recs:
-            res["pairs"][f"{b} - {a}"] = contrast(recs[a], recs[b])
+    # each entry is "<minuend> - <subtrahend>" and holds minuend minus subtrahend
+    for minuend, subtrahend in [(PRIMARY, "Crand_S0_random_control"), ("Coracle_S0_designer", PRIMARY),
+                                ("C2noinit_S0_acquired_without_inits", PRIMARY),
+                                ("C3_S0_acquired_construct", "C1_S0_construct")]:
+        if minuend in recs and subtrahend in recs:
+            res["pairs"][f"{minuend} - {subtrahend}"] = contrast(recs[subtrahend], recs[minuend])
 
     # Memorization: effect on the very training tasks the capabilities came from vs fresh test tasks.
     acquired = active_artifacts(out, "acquire")
