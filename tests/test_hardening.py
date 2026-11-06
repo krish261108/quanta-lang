@@ -126,3 +126,39 @@ def test_only_independently_verified_facts_count_as_verified_memory():
     ver = led.add_evidence("verification", "verifier supported b", {"grounding": [obs.id]})
     led.promote_to_fact(inf.id, ver.id)
     assert independently_verified(led, led.claims[inf.id])
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="switching users needs root")
+def test_sandboxed_agent_code_cannot_touch_oversight_files():
+    import os
+    import shutil
+    import tempfile
+    from pathlib import Path
+    base = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        os.chmod(base, 0o755)
+        ws, run = base / "workspace", base / "run"
+        ws.mkdir()
+        run.mkdir()
+        os.chmod(ws, 0o777)
+        audit = run / "audit.jsonl"
+        audit.write_text("original\n")
+        ctx = ToolContext(ws, Governor(), Ledger(), MemoryStore(), sandbox_user="nobody")
+        reg = default_registry()
+        code = (f"open({str(audit)!r}, 'w').write('forged')\n")
+        r = reg.execute("run_python", {"code": code}, ctx)
+        assert r.is_error and "Permission" in r.text()
+        assert audit.read_text() == "original\n"
+        ok = reg.execute("run_python", {"code": "open('result.txt', 'w').write('42')"}, ctx)
+        assert not ok.is_error and (ws / "result.txt").read_text() == "42"
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_sandbox_fails_closed_without_privileges(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    ctx = ToolContext(tmp_path, Governor(), Ledger(), MemoryStore(), sandbox_user="nobody")
+    r = default_registry().execute("run_python", {"code": "print(1)"}, ctx)
+    assert r.is_error and "refusing to run unsandboxed" in r.text()

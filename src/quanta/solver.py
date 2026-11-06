@@ -91,7 +91,7 @@ class ResearchLoop:
                  genome: Genome | None = None, governor: Governor | None = None,
                  memory: MemoryStore | None = None, human: HumanChannel | None = None,
                  registry: ToolRegistry | None = None, verifier_model: Model | None = None,
-                 max_tasks_per_iteration: int = 40) -> None:
+                 max_tasks_per_iteration: int = 40, sandbox_user: str | None = None) -> None:
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         state_path = self.run_dir / "state.json"
@@ -122,7 +122,7 @@ class ResearchLoop:
         self.verifier_factory = AgentFactory(verifier_model or model, self.registry,
                                              subagent_effort=self.genome.main_effort, allow_delegation=False)
         self.ctx = ToolContext(self.workspace, self.governor, self.ledger, memory, self.state.run_id,
-                               "orchestrator", self.human)
+                               "orchestrator", self.human, sandbox_user=sandbox_user)
         self.max_tasks_per_iteration = max_tasks_per_iteration
 
     @classmethod

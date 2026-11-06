@@ -71,7 +71,7 @@ phases complete, so that the pre-registered run uses one code version.
 | The kill switch does not latch: deleting STOP re-enables authorization | medium | **fixed**: it latches until an explicit operator reset |
 | `charge()` accepts negative amounts; wall-clock budget resets on resume | medium | negative charges **fixed**; the resume reset is open |
 | Audit log: truncation and full re-chaining verify as intact; a raising approver logs nothing; args cut at 2,000 chars | medium | **fixed while the writer is alive** (any modification of the file trips the kill switch; approver failures are logged; the full arguments are hashed). A same-user process can still forge a consistent log after the writer exits |
-| Auto-approved `run_python` can rewrite the run's own oversight files | high | open; needs an OS sandbox or approval |
+| Auto-approved `run_python` can rewrite the run's own oversight files | high | **mitigated by an OS boundary** when run with `--sandbox-user` as root (agent code runs as an unprivileged user that cannot write the run directory; tested); open otherwise |
 | Memory search returns nothing for non-ASCII queries | low | open |
 
 ## 4. Bottlenecks
