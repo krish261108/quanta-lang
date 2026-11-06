@@ -78,7 +78,12 @@ The reviewer and the evaluation code are outside the loop's authority.
 * **Process isolation.** The solver, with whatever capabilities it is being tested with,
   runs in worker subprocesses. The parent process holds the tasks (truth lives in a
   closure), answers measurement requests, enforces the budget (its count is authoritative)
-  and grades. Workers never receive seeds, parameters or truth.
+  and grades. Workers receive measurements, the points to predict, the budget, a task
+  identifier and a solver seed, never parameters or truth. (An independent review pointed
+  out that the identifier and the seed, which is an invertible function of the task seed,
+  would let a *malicious* worker running as the same user regenerate its task by importing
+  the evaluator. The solver and the artifacts do not do this, but the isolation is only as
+  strong as that; see *Residual risks*.)
 * **Frozen scoring code.** The fitting code the task generator and grader depend on is a
   protected copy (`bench/frozen.py`), and the reviewer checks artifacts against a frozen
   copy of the code policy (`bench/policy.py`).
@@ -98,6 +103,13 @@ The reviewer and the evaluation code are outside the loop's authority.
 
 ### Residual risks
 
+* Task identity is recoverable inside a worker: the task identifier names the split and
+  index, and the solver seed is an invertible function of the task seed, so code in a worker
+  that imported the evaluator could regenerate the hidden law. Nothing in this experiment's
+  solver or artifacts does so (artifacts are arithmetic expressions; the solver is designer
+  code). Closing it needs opaque job identifiers, a keyed seed derivation and an OS-level
+  boundary; changing the first two would change every random stream, so they are scheduled
+  for after the pre-registered runs.
 * Workers run as the same OS user. Capability artifacts cannot do anything but arithmetic,
   and the solver itself is designer code, so this is acceptable here. Evaluating
   model-written *code* (rather than expressions) would need an OS-level sandbox.
