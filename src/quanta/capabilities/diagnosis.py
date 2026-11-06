@@ -41,6 +41,7 @@ MODES = {
                          "needed."),
     "heavy_tails": ("A few measurements deviate far more than the rest.",
                     "The noise model, not the law, may be inadequate (heavy-tailed residuals)."),
+    "solver_error": ("The solver crashed or timed out.", "Unknown: there are no observations."),
     "unexplained": ("Misfit without a recognizable residual signature.",
                     "Some structure is unexplained; the form of the missing law is unknown."),
 }
@@ -220,19 +221,29 @@ def detect_failure(output: dict) -> str | None:
 def diagnose(task_id: str, output: dict, known_capabilities: Sequence[str]) -> GapDiagnosis | None:
     """Return a diagnosis if the task failed (including confident answers whose law
     leaves significant residual structure), else None."""
+    failure = detect_failure(output)
+    if output.get("error"):
+        # A crash is a failure too (it must count in retry statistics), but there are no
+        # observations to diagnose or research.
+        return GapDiagnosis(
+            task=task_id, current_approach="solver", observed_failure=failure or "solver error",
+            likely_failure_mode="The solver crashed or timed out.", known_capabilities_used=list(known_capabilities),
+            missing_capability_hypothesis="Unknown: no observations.", evidence={"error": output["error"][:300]},
+            confidence=0.0, proposed_next_experiment="Inspect the error; no research is possible.",
+            mode="solver_error")
     obs = output.get("observations") or []
     if len(obs) < 8:
         return None
     xs = [o[0] for o in obs]
     ys = [o[1] for o in obs]
-    failure = detect_failure(output)
     fit = best_named_fit(xs, ys)
     if fit is None:
         return None
     sig = residual_signature(xs, ys, fit)
     if failure is None:
         # the answer looked fine to the solver; is there significant leftover structure?
-        if output.get("kind") == "named" and sig["periodic_p_adj"] < ALPHA / 10:
+        answer_kind = output.get("answer_kind") or output.get("kind")
+        if answer_kind == "named" and sig["periodic_p_adj"] < ALPHA / 10:
             failure = (f"the chosen law '{output.get('answer')}' leaves a significant periodic residual "
                        f"(p={sig['periodic_p_adj']:.1e})")
         else:

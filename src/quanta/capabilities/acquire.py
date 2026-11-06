@@ -25,6 +25,7 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 from ..memory import MemoryStore
 from ..science.hypotheses import FitError, FlexibleHypothesis
@@ -43,6 +44,32 @@ MODE_FEATURES = {
     "localized_feature": lambda k: "E(Q(" in k or "I(Q(" in k,
     "transition": lambda k: "I(E(" in k,
 }
+
+
+def expanded_key(model: Model) -> str:
+    """Structure key with capability building blocks inlined, so that a law written in
+    terms of an ACTIVE capability is recognized as that capability."""
+    return "c+" + "+".join(sorted("c*" + s.expand_key() for s in model.shapes))
+
+
+def artifact_expanded_key(artifact: dict) -> str:
+    return "c+" + "+".join(sorted("c*" + t.get("structure", "") for t in artifact.get("terms", [])))
+
+
+def align_params(src: Model, params: Sequence[float], dst: Model) -> list[float] | None:
+    """Reorder a parameter vector fitted with `src`'s term order into `dst`'s order
+    (the search can return the same structure with its terms in a different order)."""
+    slices, off = {}, 0
+    for sh in src.shapes:
+        slices.setdefault(sh.key, []).append(list(params[off: off + sh.n_params]))
+        off += sh.n_params
+    out = []
+    for sh in dst.shapes:
+        bucket = slices.get(sh.key)
+        if not bucket:
+            return None
+        out.extend(bucket.pop(0))
+    return out
 
 
 @dataclass
@@ -209,6 +236,8 @@ class AcquisitionLoop:
         researched, found = [], []
         for d in order[: self.s.max_research_tasks]:
             obs = by_id[d.task].get("observations") or []
+            if len(obs) < 8:                      # e.g. a solver error: nothing to research
+                continue
             xs = [o[0] for o in obs]
             ys = [o[1] for o in obs]
             researched.append(d.task)
@@ -222,13 +251,18 @@ class AcquisitionLoop:
             for c in cands:
                 if c.model.size == 0:
                     continue
-                ratio = self._cv_ratio(c.model, c.fit.params, xs, ys, robust)
+                try:
+                    ratio = self._cv_ratio(c.model, c.fit.params, xs, ys, robust)
+                except (ArithmeticError, ValueError):
+                    ratio = None
                 if ratio is not None and ratio <= self.s.cv_ratio:
                     best = Finding(d.task, d.mode, c.model, list(c.fit.params), ratio)
                     break
             self._log("research", round=rnd, task=d.task, mode=d.mode,
                       top=[c.model.key for c in cands[:3]],
-                      kept=best.model.key if best else None, cv_ratio=best.cv_ratio if best else None)
+                      kept=best.model.key if best else None,
+                      kept_expanded=expanded_key(best.model) if best else None,
+                      cv_ratio=best.cv_ratio if best else None)
             if best:
                 found.append(best)
         return {"researched": researched, "found": found}
@@ -251,8 +285,11 @@ class AcquisitionLoop:
         pf = f.predictor()
 
         def mse(pred):
-            vals = [(pred(xs[i]) - ys[i]) ** 2 for i in te]
-            vals = [v if math.isfinite(v) else 1e30 for v in vals]
+            vals = []
+            for i in te:
+                d = pred(xs[i]) - ys[i]
+                v = d * d if math.isfinite(d) and abs(d) < 1e150 else 1e300
+                vals.append(v)
             return sorted(vals)[len(vals) // 2] if robust else sum(vals) / len(vals)
 
         m_law, m_flex = mse(pf), mse(flex.predict)
@@ -261,18 +298,18 @@ class AcquisitionLoop:
     def _design(self, found: list[Finding], config) -> list[dict]:
         groups = defaultdict(list)
         for f in found:
-            groups[f.model.key].append(f)
-        existing = {t.get("structure") for a in config["capabilities"] for t in a["terms"]}
-        existing |= {a.get("structure") for a in config["capabilities"]}
+            groups[expanded_key(f.model)].append(f)
+        existing = {artifact_expanded_key(a) for a in config["capabilities"]}
         cands = []
         for key, fs in groups.items():
             if len(fs) < self.s.k_min or key in self.attempted or key in existing:
                 continue
             fs.sort(key=lambda f: f.cv_ratio)
             modes = Counter(f.mode for f in fs)
-            cands.append({"structure": key, "model": fs[0].model, "support": len(fs),
-                          "tasks": [f.task_id for f in fs], "modes": dict(modes),
-                          "inits": [f.params for f in fs[:5]],
+            lead = fs[0].model
+            inits = [v for v in (align_params(f.model, f.params, lead) for f in fs[:5]) if v is not None]
+            cands.append({"structure": key, "model": lead, "support": len(fs),
+                          "tasks": [f.task_id for f in fs], "modes": dict(modes), "inits": inits,
                           "mean_cv_ratio": round(sum(f.cv_ratio for f in fs) / len(fs), 4)})
         cands.sort(key=lambda c: (-c["support"], c["mean_cv_ratio"]))
         return cands
@@ -288,6 +325,7 @@ class AcquisitionLoop:
                              description=(f"Hypothesis family y = c0 + sum_i c_i * term_i with terms {sources}. "
                                           f"Constructed by program search from {cand['support']} failed training "
                                           f"tasks (diagnosed modes: {cand['modes']})."))
+        art["expanded_structure"] = cand["structure"]       # metadata; not part of the hashed terms
         diag_example = next((d.to_dict() for d in diags if cand["tasks"] and d.task == cand["tasks"][0]), {})
         rec = CapabilityRecord(
             capability_id=cid, version=1, name=art["name"], description=art["description"],
@@ -355,6 +393,9 @@ class AcquisitionLoop:
                                             "structure": rec.artifact.get("structure"), "reason": reason[:300]})
             self._remember(rec, False, {"reasons": [reason], "stage": stage})
         else:
+            # Not judged: withdraw this record and let the structure be proposed again later.
+            self.registry.set_status(rec.capability_id, rec.version, "DEPRECATED", f"{stage}: {reason}")
+            self.attempted.discard(rec.artifact.get("expanded_structure") or rec.artifact.get("structure"))
             self._log("deferred", capability=rec.capability_id, reason=reason)
 
     def _remember(self, rec: CapabilityRecord, success: bool, decision: dict) -> None:
@@ -380,15 +421,18 @@ class AcquisitionLoop:
     def _diagnosis_consistency(self) -> dict:
         """Did the diagnosed failure mode predict the structure the research found?"""
         hits, total = 0, 0
+        seen: set[str] = set()
         per_mode = defaultdict(lambda: [0, 0])
         for line in self.log_path.read_text(encoding="utf-8").splitlines():
             e = json.loads(line)
-            if e.get("event") != "research" or not e.get("kept") or e.get("run") != self.run_id:
+            if (e.get("event") != "research" or not e.get("kept") or e.get("run") != self.run_id
+                    or e["task"] in seen):
                 continue
             check = MODE_FEATURES.get(e["mode"])
             if check is None:
                 continue
-            ok = check(e["kept"])
+            seen.add(e["task"])                       # each task counts once
+            ok = check(e.get("kept_expanded") or e["kept"])
             hits += ok
             total += 1
             per_mode[e["mode"]][0] += ok
@@ -433,15 +477,14 @@ class RandomAcquisitionLoop(AcquisitionLoop):
         return inits
 
     def _design(self, found, config) -> list[dict]:
-        existing = {t.get("structure") for a in config["capabilities"] for t in a["terms"]}
-        existing |= {a.get("structure") for a in config["capabilities"]}
+        existing = {artifact_expanded_key(a) for a in config["capabilities"]}
         cands, tries = [], 0
-        while len(cands) < self.s.max_candidates_per_round and tries < 200:
+        while len(cands) < self.s.max_candidates_per_round and tries < 400:
             tries += 1
             model = random_model(self.rng.randint(1, self.s.synth_max_size), self.rng)
-            key = model.key
-            if (model.size == 0 or key in self.attempted or key in existing
-                    or any(c["structure"] == key for c in cands)):
+            key = expanded_key(model)
+            if (model.size == 0 or model.size > self.s.synth_max_size or key in self.attempted
+                    or key in existing or any(c["structure"] == key for c in cands)):
                 continue
             cands.append({"structure": key, "model": model, "support": 0, "tasks": [], "modes": {"random": 1},
                           "inits": self._fitted_inits(model), "mean_cv_ratio": None})

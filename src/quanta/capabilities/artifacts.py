@@ -88,6 +88,7 @@ def _self_tests(artifact: dict, trials: int = 10, seed: int = 0) -> dict:
             finite += all(math.isfinite(v) and abs(v) < 1e12 for v in vals)
     out["finite"] = finite / total >= 0.95
     successes, times = 0, []
+    checked_determinism = False
     dense = [0.1 + 9.9 * i / 59 for i in range(60)]
     for t in range(trials):
         params = [[v * (1 + rng.uniform(-0.1, 0.1)) for v in inits[j][t % len(inits[j])]]
@@ -115,7 +116,8 @@ def _self_tests(artifact: dict, trials: int = 10, seed: int = 0) -> dict:
         times.append(time.perf_counter() - t0)
         err = (sum((fit.predict(x) - v) ** 2 for x, v in zip(dense, truths)) / len(dense)) ** 0.5 / sd
         successes += err < 0.1
-        if t == 0:
+        if not checked_determinism:                   # on the first trial that was actually fitted
+            checked_determinism = True
             fam2, _ = load_artifact(artifact)
             fit2 = fam2.fit(xs, ys)
             out["deterministic"] = all(fit.predict(x) == fit2.predict(x) for x in dense[::7])

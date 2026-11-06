@@ -29,7 +29,7 @@ from pathlib import Path
 from ..stats import paired_bootstrap
 from .acquisition import (DECISION_SPLITS, REPLICATION_STRIDE, REPORT_ONLY_SPLITS, SPLIT_WIDTH, SPLITS, evaluate,
                           make_task)
-from .policy import PolicyError, check_source
+from .policy import check_source
 
 GATES = {
     "confidence": 0.95,
@@ -175,7 +175,7 @@ class Reviewer:
         try:
             for t in artifact.get("terms", []):
                 check_source(f"lambda x, p: {t['source']}")
-        except (PolicyError, KeyError, TypeError):
+        except Exception:  # noqa: BLE001 - anything that defeats the static check fails integrity
             policy_ok = False
         diff_ok = (cand.get("genome") == base.get("genome")
                    and cand.get("capabilities", [])[:-1] == base.get("capabilities", [])
