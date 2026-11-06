@@ -79,10 +79,17 @@ class EvaluationService:
         if use_cache and key in self._cache:
             return self._cache[key]
         task_list = _block_tasks(split, n, block, self.replication)[:limit]
-        recs = evaluate(config, split, len(task_list), replication=self.replication,
-                        workers=workers or self.workers, with_observations=with_observations, task_list=task_list)
         suffix = "" if use_cache else "-rerun"
         path = self.log_dir / f"{split}-r{self.replication}-b{block}-n{n}-{key[0]}{suffix}.jsonl"
+        if use_cache and not with_observations and path.exists():
+            # Evaluation is deterministic in (config, tasks), so a complete record file written
+            # earlier for exactly these tasks is the result (used to replay an interrupted run).
+            stored = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            if [r.get("seed") for r in stored] == [t.seed for t in task_list]:
+                self._cache[key] = stored
+                return stored
+        recs = evaluate(config, split, len(task_list), replication=self.replication,
+                        workers=workers or self.workers, with_observations=with_observations, task_list=task_list)
         with path.open("w", encoding="utf-8") as f:
             for r in recs:
                 f.write(json.dumps({k: v for k, v in r.items() if k != "observations"}, default=str) + "\n")

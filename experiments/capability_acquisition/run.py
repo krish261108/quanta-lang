@@ -129,12 +129,20 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
     summary_path = d / "summary.json"
     if summary_path.exists():
         return json.loads(summary_path.read_text())
+    stale = None
     if (d / "events.jsonl").exists():
-        # A loop cannot be resumed mid-round without re-using held-out blocks; start over cleanly.
+        # A loop cannot be resumed mid-round. Every step is deterministic, so the run is
+        # replayed from the start; complete evaluation records of the interrupted attempt are
+        # reused (bench/review.py checks they cover exactly the same tasks), and the replay's
+        # decisions are compared with the interrupted attempt's afterwards.
         stale = d.with_name(f"{name}.interrupted-{int(time.time())}")
         d.rename(stale)
-        log(f"{name}: previous attempt was interrupted; kept it at {stale.name} and restarting")
+        log(f"{name}: previous attempt was interrupted; kept it at {stale.name} and replaying")
     d.mkdir(parents=True, exist_ok=True)
+    if stale is not None and (stale / "evals").exists():
+        import shutil
+        shutil.copytree(stale / "evals", d / "evals", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("train-*", "*-rerun.jsonl"))
     service = EvaluationService(d / "evals", replication=rep, workers=workers)
     reviewer = Reviewer(service, d / "reviewer", workers=workers, first_block=FIRST_BLOCK[name])
     registry = Registry(d / "registry.jsonl")
@@ -159,9 +167,33 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
                    for r in registry.by_status("ACTIVE")],
         "registry": [asdict(r) for r in registry.records.values()],
         "proposer_seen_seeds": len(service.seen_seeds), "memory": mem,
+        "replay_check": replay_check(d, sorted(d.parent.glob(f"{name}.interrupted-*"))),
     }
     dump_json(summary_path, summary)
     return summary
+
+
+def _decisions(events_path: Path) -> list[tuple]:
+    keep = ("design", "implement", "validate", "review", "retry")
+    out = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        e = json.loads(line)
+        if e["event"] in keep:
+            out.append((e["event"], e.get("capability"), e.get("structure"), e.get("approved"),
+                        e.get("mean_delta"), e.get("sha256"),
+                        json.dumps([c["structure"] for c in e.get("candidates", [])])))
+    return out
+
+
+def replay_check(d: Path, interrupted: list[Path]) -> list[dict]:
+    """Did the replay take exactly the decisions the interrupted attempts had taken so far?"""
+    new = _decisions(d / "events.jsonl")
+    checks = []
+    for old_dir in interrupted:
+        old = _decisions(old_dir / "events.jsonl")
+        checks.append({"attempt": old_dir.name, "decisions_before_interruption": len(old),
+                       "identical_prefix": new[:len(old)] == old})
+    return checks
 
 
 def active_artifacts(out: Path, name: str) -> list[dict]:

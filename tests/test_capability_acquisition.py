@@ -254,3 +254,16 @@ def test_new_options_default_off_reproduce_the_legacy_loop():
     assert (a.answer, a.credence, a.n_experiments) == (b.answer, b.credence, b.n_experiments)
     assert [o.x for o in a.observations] == [o.x for o in b.observations]
     assert Genome().fingerprint() == Genome(pool_equivalent=False).fingerprint()
+
+
+def test_evaluation_records_are_reused_only_for_identical_tasks(tmp_path, monkeypatch):
+    config = Toolkit(S0, []).to_config()
+    first = R.EvaluationService(tmp_path, workers=2).records(config, "validation", 3, block=0)
+    replay = R.EvaluationService(tmp_path, workers=2)
+    monkeypatch.setattr(R, "evaluate", lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-evaluated")))
+    assert replay.records(config, "validation", 3, block=0) == json.loads(json.dumps(first, default=str))
+    path = next(tmp_path.glob("validation-*.jsonl"))
+    lines = path.read_text().splitlines()
+    path.write_text("\n".join(lines[:2]) + "\n")             # an incomplete file is not reused
+    with pytest.raises(AssertionError, match="re-evaluated"):
+        R.EvaluationService(tmp_path, workers=2).records(config, "validation", 3, block=0)
