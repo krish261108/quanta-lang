@@ -1,0 +1,331 @@
+{
+ "split": "test",
+ "n": 400,
+ "configs": {
+  "L0_champion": {
+   "genome_changes": {
+    "likelihood": "student_t",
+    "falsification_rounds": 2
+   },
+   "n": 400,
+   "mean_score": 0.79761,
+   "accuracy": 0.785,
+   "accuracy_by_category": {
+    "clean": 0.908,
+    "outliers": 0.9158,
+    "outside-initial-space": 0.0
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "outside_space_by_family": {
+    "damped_oscillation": 0.0,
+    "gaussian_bump": 0.0,
+    "linear_sin": 0.0
+   },
+   "outside_space_answers": {
+    "damped_oscillation->sinusoid": 14,
+    "gaussian_bump->sinusoid": 14,
+    "linear_sin->cubic": 5,
+    "damped_oscillation->step": 4,
+    "linear_sin->linear": 4,
+    "linear_sin->power": 4,
+    "gaussian_bump->constant": 2,
+    "linear_sin->step": 1,
+    "damped_oscillation->exponential": 1,
+    "damped_oscillation->logarithmic": 1,
+    "linear_sin->saturating": 1,
+    "linear_sin->logarithmic": 1
+   },
+   "clean_confusions": {
+    "constant->sinusoid": 7,
+    "linear->quadratic": 5,
+    "exponential->cubic": 3,
+    "quadratic->cubic": 3,
+    "constant->step": 2,
+    "linear->cubic": 1,
+    "power->quadratic": 1,
+    "constant->quadratic": 1
+   },
+   "confidently_wrong": 0.1,
+   "mean_nrmse_capped": 0.1938,
+   "seconds": 38.8
+  },
+  "L1_flexible": {
+   "genome_changes": {
+    "likelihood": "student_t",
+    "falsification_rounds": 2,
+    "flexible_baseline": true
+   },
+   "n": 400,
+   "mean_score": 0.76277,
+   "accuracy": 0.7575,
+   "accuracy_by_category": {
+    "clean": 0.792,
+    "outliers": 0.8842,
+    "outside-initial-space": 0.3818
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "outside_space_by_family": {
+    "damped_oscillation": 0.2857,
+    "gaussian_bump": 0.9375,
+    "linear_sin": 0.0
+   },
+   "outside_space_answers": {
+    "gaussian_bump->none": 15,
+    "linear_sin->none": 14,
+    "damped_oscillation->sinusoid": 13,
+    "damped_oscillation->none": 6,
+    "damped_oscillation->step": 2,
+    "linear_sin->power": 2,
+    "linear_sin->exponential": 1,
+    "linear_sin->linear": 1,
+    "gaussian_bump->constant": 1
+   },
+   "clean_confusions": {
+    "saturating->none": 8,
+    "constant->sinusoid": 6,
+    "quadratic->cubic": 5,
+    "exponential->none": 4,
+    "linear->quadratic": 4,
+    "cubic->none": 4,
+    "quadratic->none": 4,
+    "linear->none": 4
+   },
+   "confidently_wrong": 0.18,
+   "mean_nrmse_capped": 0.1967,
+   "seconds": 37.0
+  },
+  "L2_flexible_expand": {
+   "genome_changes": {
+    "likelihood": "student_t",
+    "falsification_rounds": 2,
+    "flexible_baseline": true,
+    "expand_on_inadequacy": true
+   },
+   "n": 400,
+   "mean_score": 0.78648,
+   "accuracy": 0.78,
+   "accuracy_by_category": {
+    "clean": 0.764,
+    "outliers": 0.8842,
+    "outside-initial-space": 0.6727
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "outside_space_by_family": {
+    "damped_oscillation": 0.2381,
+    "gaussian_bump": 0.9375,
+    "linear_sin": 0.9444
+   },
+   "outside_space_answers": {
+    "linear_sin->linear_sin": 17,
+    "gaussian_bump->none": 15,
+    "damped_oscillation->linear_sin": 7,
+    "damped_oscillation->sinusoid": 7,
+    "damped_oscillation->none": 5,
+    "damped_oscillation->step": 2,
+    "gaussian_bump->constant": 1,
+    "linear_sin->power": 1
+   },
+   "clean_confusions": {
+    "saturating->none": 8,
+    "exponential->none": 5,
+    "linear->quadratic": 5,
+    "quadratic->cubic": 5,
+    "constant->sinusoid": 5,
+    "cubic->none": 4,
+    "quadratic->none": 4,
+    "exponential->cubic": 3
+   },
+   "confidently_wrong": 0.1425,
+   "mean_nrmse_capped": 0.1843,
+   "seconds": 45.5
+  },
+  "L3_flexible_expand_lookelsewhere": {
+   "genome_changes": {
+    "likelihood": "student_t",
+    "falsification_rounds": 2,
+    "flexible_baseline": true,
+    "expand_on_inadequacy": true,
+    "freq_penalty": true
+   },
+   "n": 400,
+   "mean_score": 0.78563,
+   "accuracy": 0.8,
+   "accuracy_by_category": {
+    "clean": 0.8,
+    "outliers": 0.8737,
+    "outside-initial-space": 0.6727
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "outside_space_by_family": {
+    "damped_oscillation": 0.381,
+    "gaussian_bump": 0.9375,
+    "linear_sin": 0.7778
+   },
+   "outside_space_answers": {
+    "gaussian_bump->none": 15,
+    "linear_sin->linear_sin": 14,
+    "damped_oscillation->none": 8,
+    "damped_oscillation->sinusoid": 5,
+    "damped_oscillation->linear_sin": 4,
+    "linear_sin->none": 2,
+    "damped_oscillation->step": 2,
+    "damped_oscillation->logarithmic": 1,
+    "damped_oscillation->cubic": 1,
+    "linear_sin->cubic": 1,
+    "gaussian_bump->constant": 1,
+    "linear_sin->power": 1
+   },
+   "clean_confusions": {
+    "saturating->none": 8,
+    "exponential->none": 5,
+    "quadratic->cubic": 5,
+    "cubic->none": 4,
+    "quadratic->none": 4,
+    "linear->quadratic": 3,
+    "exponential->cubic": 3,
+    "constant->step": 3
+   },
+   "confidently_wrong": 0.1475,
+   "mean_nrmse_capped": 0.19,
+   "seconds": 48.7
+  },
+  "L4_flexible_expand_lookelsewhere_pool": {
+   "genome_changes": {
+    "likelihood": "student_t",
+    "falsification_rounds": 2,
+    "flexible_baseline": true,
+    "expand_on_inadequacy": true,
+    "freq_penalty": true,
+    "pool_equivalent": true
+   },
+   "n": 400,
+   "mean_score": 0.76912,
+   "accuracy": 0.745,
+   "accuracy_by_category": {
+    "clean": 0.728,
+    "outliers": 0.8421,
+    "outside-initial-space": 0.6545
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "outside_space_by_family": {
+    "damped_oscillation": 0.381,
+    "gaussian_bump": 0.875,
+    "linear_sin": 0.7778
+   },
+   "outside_space_answers": {
+    "gaussian_bump->none": 14,
+    "linear_sin->linear_sin": 14,
+    "damped_oscillation->none": 8,
+    "damped_oscillation->sinusoid": 5,
+    "damped_oscillation->linear_sin": 4,
+    "linear_sin->none": 2,
+    "damped_oscillation->step": 2,
+    "gaussian_bump->constant": 2,
+    "damped_oscillation->logarithmic": 1,
+    "damped_oscillation->cubic": 1,
+    "linear_sin->cubic": 1,
+    "linear_sin->linear": 1
+   },
+   "clean_confusions": {
+    "quadratic->none": 11,
+    "quadratic->cubic": 9,
+    "saturating->none": 8,
+    "exponential->none": 5,
+    "constant->step": 5,
+    "linear->none": 4,
+    "linear->quadratic": 4,
+    "cubic->none": 4
+   },
+   "confidently_wrong": 0.24,
+   "mean_nrmse_capped": 0.213,
+   "seconds": 19.4
+  }
+ },
+ "vs_L0": {
+  "L1_flexible - L0_champion": {
+   "mean_delta": -0.03484,
+   "ci": [
+    -0.05783,
+    -0.01177
+   ],
+   "wins": 98,
+   "losses": 226
+  },
+  "L2_flexible_expand - L0_champion": {
+   "mean_delta": -0.01112,
+   "ci": [
+    -0.03655,
+    0.01526
+   ],
+   "wins": 106,
+   "losses": 218
+  },
+  "L3_flexible_expand_lookelsewhere - L0_champion": {
+   "mean_delta": -0.01198,
+   "ci": [
+    -0.03847,
+    0.01473
+   ],
+   "wins": 119,
+   "losses": 216
+  },
+  "L4_flexible_expand_lookelsewhere_pool - L0_champion": {
+   "mean_delta": -0.02849,
+   "ci": [
+    -0.05832,
+    0.00246
+   ],
+   "wins": 171,
+   "losses": 165
+  }
+ },
+ "steps": {
+  "L2_flexible_expand - L1_flexible": {
+   "mean_delta": 0.02371,
+   "ci": [
+    0.00905,
+    0.03859
+   ],
+   "wins": 68,
+   "losses": 90
+  },
+  "L3_flexible_expand_lookelsewhere - L2_flexible_expand": {
+   "mean_delta": -0.00085,
+   "ci": [
+    -0.01057,
+    0.00845
+   ],
+   "wins": 129,
+   "losses": 73
+  },
+  "L4_flexible_expand_lookelsewhere_pool - L3_flexible_expand_lookelsewhere": {
+   "mean_delta": -0.01651,
+   "ci": [
+    -0.03552,
+    0.00153
+   ],
+   "wins": 120,
+   "losses": 58
+  }
+ }
+}

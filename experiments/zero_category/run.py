@@ -1,0 +1,116 @@
+"""The original benchmark's 0% "outside-initial-space" category, revisited.
+
+The champion of the first self-improvement run scored 0% on tasks whose law lies
+outside its starting hypothesis space (linear+sine, gaussian bump, damped
+oscillation). With `flexible_baseline=False` the answer "none" is impossible, and
+without expansion `linear_sin` is never considered, so 0% was a structural
+consequence of the configuration, not a measured limit.
+
+This script evaluates a fixed, pre-specified ladder of configurations on the
+original held-out test split (400 tasks; no selection among them happens here):
+
+    L0  champion (student-t likelihood, 2 falsification rounds)
+    L1  + flexible baseline                     ("none" becomes possible)
+    L2  + expansion on inadequacy               (linear_sin etc. join when no law fits)
+    L3  + look-elsewhere correction             (frequency-searched families pay -ln N_freq)
+    L4  + predictive pooling
+
+    python experiments/zero_category/run.py [--n 400] [--jobs 4]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "src"))
+
+from quanta.bench.harness import run_suite  # noqa: E402
+from quanta.genome import Genome  # noqa: E402
+from quanta.stats import paired_bootstrap  # noqa: E402
+
+CHAMPION = dict(likelihood="student_t", falsification_rounds=2)
+LADDER = {
+    "L0_champion": Genome(**CHAMPION),
+    "L1_flexible": Genome(**CHAMPION, flexible_baseline=True),
+    "L2_flexible_expand": Genome(**CHAMPION, flexible_baseline=True, expand_on_inadequacy=True),
+    "L3_flexible_expand_lookelsewhere": Genome(**CHAMPION, flexible_baseline=True, expand_on_inadequacy=True,
+                                               freq_penalty=True),
+    "L4_flexible_expand_lookelsewhere_pool": Genome(**CHAMPION, flexible_baseline=True, expand_on_inadequacy=True,
+                                                    freq_penalty=True, pool_equivalent=True),
+}
+
+
+def summarize(results: list[dict]) -> dict:
+    by_cat, by_truth = defaultdict(list), defaultdict(list)
+    for r in results:
+        by_cat[r["category"]].append(r)
+        by_truth[r["expected"]].append(r)
+
+    def acc(rows):
+        return round(sum(r["correct"] for r in rows) / len(rows), 4) if rows else None
+
+    outside = by_cat.get("outside-initial-space", [])
+    return {
+        "n": len(results),
+        "mean_score": round(statistics.mean(r["score"] for r in results), 5),
+        "accuracy": acc(results),
+        "accuracy_by_category": {k: acc(v) for k, v in sorted(by_cat.items())},
+        "count_by_category": {k: len(v) for k, v in sorted(by_cat.items())},
+        "outside_space_by_family": {f: acc([r for r in outside if r["truth"] == f])
+                                    for f in sorted({r["truth"] for r in outside})},
+        "outside_space_answers": dict(Counter(f"{r['truth']}->{r['answer']}" for r in outside).most_common(12)),
+        "clean_confusions": dict(Counter(f"{r['expected']}->{r['answer']}" for r in by_cat.get("clean", [])
+                                         if not r["correct"]).most_common(8)),
+        "confidently_wrong": round(sum(1 for r in results if not r["correct"] and r["credence"] > 0.8)
+                                   / len(results), 4),
+        "mean_nrmse_capped": round(statistics.mean(min(r["nrmse"], 10) for r in results), 4),
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--n", type=int, default=400)
+    ap.add_argument("--jobs", type=int, default=4)
+    args = ap.parse_args()
+    out = {"split": "test", "n": args.n, "configs": {}, "vs_L0": {}, "steps": {}}
+    raw = {}
+    for name, g in LADDER.items():
+        t0 = time.time()
+        res = run_suite(g, "test", args.n, jobs=args.jobs)
+        raw[name] = res.results
+        out["configs"][name] = {"genome_changes": {k: v for k, v in g.to_dict().items()
+                                                   if v != Genome().to_dict()[k]},
+                                **summarize(res.results), "seconds": round(time.time() - t0, 1)}
+        print(name, json.dumps(out["configs"][name]["accuracy_by_category"]), flush=True)
+    names = list(LADDER)
+    for a, b in [(names[0], n) for n in names[1:]] + list(zip(names, names[1:])):
+        c = paired_bootstrap([r["score"] for r in raw[a]], [r["score"] for r in raw[b]], n_boot=4000, seed=1)
+        key = "vs_L0" if a == names[0] else "steps"
+        out[key][f"{b} - {a}"] = {"mean_delta": round(c.mean_delta, 5), "ci": [round(c.ci_low, 5),
+                                  round(c.ci_high, 5)], "wins": c.wins, "losses": c.losses}
+    (HERE / "results.json").write_text(json.dumps(out, indent=1))
+    lines = ["# Zero-category check (original benchmark, held-out test split)", "",
+             f"n = {args.n} tasks; paired 95% bootstrap intervals. Generated by `run.py`.", "",
+             "| config | score | accuracy | clean | outliers | outside-space | linear_sin | gaussian_bump |"
+             " damped_osc. | confidently wrong |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for name, c in out["configs"].items():
+        cat, fam = c["accuracy_by_category"], c["outside_space_by_family"]
+        lines.append(f"| {name} | {c['mean_score']:.4f} | {c['accuracy']:.3f} | {cat.get('clean')} | "
+                     f"{cat.get('outliers')} | {cat.get('outside-initial-space')} | {fam.get('linear_sin')} | "
+                     f"{fam.get('gaussian_bump')} | {fam.get('damped_oscillation')} | {c['confidently_wrong']} |")
+    lines += ["", "| comparison | Δ score | 95% CI |", "|---|---|---|"]
+    for k, v in list(out["vs_L0"].items()) + list(out["steps"].items()):
+        lines.append(f"| {k} | {v['mean_delta']:+.4f} | [{v['ci'][0]:+.4f}, {v['ci'][1]:+.4f}] |")
+    (HERE / "RESULTS.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
