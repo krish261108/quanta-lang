@@ -1,0 +1,207 @@
+{
+ "initial": {
+  "n_initial": 6,
+  "design": "random",
+  "n_candidates": 40,
+  "explore_prob": 0.0,
+  "likelihood": "gaussian",
+  "t_dof": 4.0,
+  "stop_posterior": 0.95,
+  "min_experiments": 8,
+  "patience": 0,
+  "falsification_rounds": 0,
+  "temperature": 1.0,
+  "flexible_baseline": false,
+  "expand_on_inadequacy": false,
+  "use_learned_priors": false,
+  "prior_pseudocount": 2.0,
+  "ask_below": 0.5,
+  "min_hypotheses": 3,
+  "research_depth": 1,
+  "verification": "independent",
+  "max_iterations": 3,
+  "main_effort": "high",
+  "subagent_effort": "medium",
+  "delegate": true,
+  "phase_notes": "{}"
+ },
+ "final": {
+  "n_initial": 6,
+  "design": "random",
+  "n_candidates": 40,
+  "explore_prob": 0.0,
+  "likelihood": "student_t",
+  "t_dof": 4.0,
+  "stop_posterior": 0.95,
+  "min_experiments": 8,
+  "patience": 0,
+  "falsification_rounds": 2,
+  "temperature": 1.0,
+  "flexible_baseline": false,
+  "expand_on_inadequacy": false,
+  "use_learned_priors": false,
+  "prior_pseudocount": 2.0,
+  "ask_below": 0.5,
+  "min_hypotheses": 3,
+  "research_depth": 1,
+  "verification": "independent",
+  "max_iterations": 3,
+  "main_effort": "high",
+  "subagent_effort": "medium",
+  "delegate": true,
+  "phase_notes": "{}"
+ },
+ "adopted": [
+  {
+   "version": 1,
+   "candidate": "g1c1",
+   "generation": 1,
+   "changes": {
+    "falsification_rounds": [
+     0,
+     2
+    ]
+   },
+   "rationale": "16% of answers were confidently wrong: test the leading hypothesis adversarially before accepting it",
+   "selection_delta": 0.025864935069242943,
+   "confirmation_delta": 0.016546363523990037,
+   "confirmation_ci": [
+    0.00433368083776241,
+    0.031488738654419784
+   ]
+  },
+  {
+   "version": 2,
+   "candidate": "g2c5",
+   "generation": 2,
+   "changes": {
+    "likelihood": [
+     "gaussian",
+     "student_t"
+    ]
+   },
+   "rationale": "accuracy with corrupted measurements (0.83) trails clean data (0.94): use a heavy-tailed noise model",
+   "selection_delta": 0.013576375497013042,
+   "confirmation_delta": 0.013420849117685303,
+   "confirmation_ci": [
+    0.0012982242232146362,
+    0.02551962464412094
+   ]
+  }
+ ],
+ "stop_reason": "diminishing returns: no confirmed improvement in 3 consecutive generations",
+ "generations_run": 5,
+ "test": {
+  "initial": {
+   "n": 400,
+   "mean_score": 0.7225196185221074,
+   "accuracy": 0.71,
+   "mean_credence": 0.8970621616708914,
+   "brier": 0.24372880660961516,
+   "ece": 0.24215849261138161,
+   "overconfident_error_rate": 0.215,
+   "underconfident_correct_rate": 0.0075,
+   "mean_cost": 0.5582500000000024,
+   "mean_nrmse": 0.8010757803478783,
+   "budget_exhausted_rate": 0.3225,
+   "accuracy_by_category": {
+    "clean": 0.844,
+    "outliers": 0.7684210526315789,
+    "outside-initial-space": 0.0
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "top_confusions": [
+    [
+     "none->sinusoid",
+     28
+    ],
+    [
+     "constant->step",
+     23
+    ],
+    [
+     "quadratic->cubic",
+     11
+    ],
+    [
+     "linear->cubic",
+     6
+    ],
+    [
+     "exponential->cubic",
+     5
+    ],
+    [
+     "linear_sin->cubic",
+     5
+    ]
+   ],
+   "ask_rate": 0.04
+  },
+  "final": {
+   "n": 400,
+   "mean_score": 0.7617890797279895,
+   "accuracy": 0.7525,
+   "mean_credence": 0.8863129463174194,
+   "brier": 0.1889892328693812,
+   "ece": 0.17703726760833766,
+   "overconfident_error_rate": 0.1475,
+   "underconfident_correct_rate": 0.01,
+   "mean_cost": 0.6470833333333345,
+   "mean_nrmse": 0.7124708036555291,
+   "budget_exhausted_rate": 0.3925,
+   "accuracy_by_category": {
+    "clean": 0.88,
+    "outliers": 0.8526315789473684,
+    "outside-initial-space": 0.0
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "top_confusions": [
+    [
+     "none->sinusoid",
+     28
+    ],
+    [
+     "constant->step",
+     23
+    ],
+    [
+     "linear->quadratic",
+     7
+    ],
+    [
+     "linear_sin->cubic",
+     5
+    ],
+    [
+     "quadratic->cubic",
+     5
+    ],
+    [
+     "none->step",
+     4
+    ]
+   ],
+   "ask_rate": 0.04
+  },
+  "comparison": {
+   "n": 400,
+   "mean_delta": 0.03926946120588175,
+   "ci_low": 0.025396598184899494,
+   "ci_high": 0.05401890243357304,
+   "wins": 157,
+   "losses": 243,
+   "ties": 0,
+   "sign_p": 1.995805429650304e-05,
+   "confidence": 0.95
+  }
+ }
+}

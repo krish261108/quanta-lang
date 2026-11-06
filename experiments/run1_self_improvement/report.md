@@ -1,0 +1,72 @@
+# Self-improvement report
+
+**Problem.** Improve the strategy of the hypothesis-driven discovery loop, keeping a change only if it demonstrably performs better.
+
+## Result
+
+1 change(s) adopted over 4 generation(s). Held-out mean score 0.7225 -> 0.7517 (Δ +0.0292, 95% CI [+0.0172, +0.0428]).
+
+## Established facts
+
+_Claims grounded in direct observation, executed checks, verified sources or independent verification._
+
+- **C3** On 400 held-out tasks the initial genome scored 0.7225 and the final genome 0.7517 (paired difference +0.0292; 83 wins / 188 losses / 129 ties).  
+  evidence: E1 (execution: held-out test run of initial genome (4b3aedaa9a43)); E2 (execution: held-out test run of final genome (e404c318d23e))
+- **C4** Accuracy 0.710 -> 0.745; Brier 0.244 -> 0.199; ECE 0.242 -> 0.176; confidently-wrong rate 0.215 -> 0.158; mean cost 0.558 -> 0.659.  
+  evidence: E1 (execution: held-out test run of initial genome (4b3aedaa9a43)); E2 (execution: held-out test run of final genome (e404c318d23e))
+
+## Inferences
+
+_Derived from facts by reasoning or statistics; can be wrong if a premise or the method is wrong._
+
+- **C6** (p=0.95) The final genome performs better than the initial one on this task distribution (95% CI on mean improvement: [+0.0172, +0.0428]; sign test p=1.6e-10).  
+  from C3, C4; evidence E5 (derivation: paired bootstrap on held-out per-task scores)
+- **C7** (p=0.90) Adopted change v1 ({'falsification_rounds': (0, 2)}) helped: it passed the gate on the selection split (delta +0.0338) and replicated on fresh tasks (delta +0.0156). Rationale: 12% of answers were confidently wrong: test the leading hypothesis adversarially before accepting it  
+  from C3
+
+## Speculation and open hypotheses
+
+_Not established. Listed so they are not mistaken for findings._
+
+- **C8** (p=0.40) The same strategy changes (adversarial falsification, robust likelihoods, a flexible 'none of the above' baseline, calibrated credence) would improve LLM-driven open-ended research. Not tested here.
+
+## Falsification record
+
+- No falsification tests were run.
+
+## Adopted changes
+
+- v1 (generation 1): `{'falsification_rounds': (0, 2)}` — 12% of answers were confidently wrong: test the leading hypothesis adversarially before accepting it (selection Δ +0.0338, confirmation Δ +0.0156, CI [+0.0014, +0.0354])
+
+## Final genome changes vs. initial
+
+```
+{
+ "falsification_rounds": [
+  0,
+  2
+ ]
+}
+```
+
+## Limitations
+
+- The benchmark is a controlled micro-world (1-D black-box law discovery); gains are measured only on its task distribution.
+- Changes are to strategy parameters (and optionally sandboxed code in mutable paths); the improver cannot change the grader, the gate or governance, so it cannot discover improvements that would require changing them.
+- 23 candidate(s) failed the selection gate and 0 failed replication; a stricter or looser gate would change what is adopted.
+- Proposals come from fixed diagnostic rules plus random exploration unless an LLM proposer is used; the search is local and greedy.
+- Stopped because: diminishing returns: no confirmed improvement in 3 consecutive generations.
+
+## Reproducibility
+
+- **code_version:** `cbf34d1+dirty`
+- **python:** `3.11.15`
+- **platform:** `Linux-6.18.44-fc-v64-x86_64-with-glibc2.39`
+- **command:** `python -m quanta.cli improve --run-dir <dir>  (see docs/SELF_IMPROVEMENT.md)`
+- **seed:** `0`
+- **n_selection:** `120`
+- **n_confirmation:** `120`
+- **n_test:** `400`
+- **initial_genome:** `4b3aedaa9a43`
+- **final_genome:** `e404c318d23e`
+- **gate:** `{"min_effect": 0.0, "confidence": 0.95, "max_category_regression": 0.1, "min_category_size": 8, "n_boot": 4000}`
