@@ -317,8 +317,12 @@ class DiscoveryLoop:
         lo, hi = system.domain
         names = list(CORE_FAMILIES) + ([FLEXIBLE] if g.flexible_baseline else [])
         hyps = {h.name: h for h in make_hypotheses(names)}
+        held: list = []                     # acquired capabilities waiting for an inadequacy signal
         for h in self.extra:
-            hyps[h.name] = h
+            if g.gate_capabilities and getattr(h, "origin", "") == "capability":
+                held.append(h)
+            else:
+                hyps[h.name] = h
         for h in hyps.values():
             self._register(h)
 
@@ -383,6 +387,17 @@ class DiscoveryLoop:
             # REVISE: named laws inadequate -> widen the hypothesis space once.
             if leader == FLEXIBLE and post[leader] >= 0.5 and len(obs) >= g.min_experiments:
                 inadequacy = True
+            if held and inadequacy:
+                ev = led.add_evidence("derivation", "the core laws are inadequate; enabling acquired capabilities",
+                                      {"posterior": post, "capabilities": [h.name for h in held]})
+                for h in held:
+                    hyps[h.name] = h
+                    self._register(h)
+                    hyp_claims[h.name] = led.assert_claim(
+                        f"The system follows the acquired law {h.name}.", Status.SPECULATION, 0.3,
+                        evidence=[ev.id], author="revise").id
+                held = []
+                continue
             if (g.expand_on_inadequacy and not expanded and leader == FLEXIBLE
                     and post[leader] >= 0.5 and len(obs) >= g.min_experiments):
                 expanded = True

@@ -48,6 +48,8 @@ SPACE: dict[str, ParamSpec] = {
     "construct": ParamSpec("bool", doc="construct new hypotheses by program synthesis when named laws fail"),
     "construct_max_size": ParamSpec("int", 1, 4, doc="largest program (operator count) construction searches"),
     "construct_holdout": ParamSpec("int", 0, 15, doc="fresh measurements required after constructing a law"),
+    "gate_capabilities": ParamSpec("bool", doc="acquired capability families join the competition only "
+                                                "after the core laws are found inadequate"),
     "evidence": ParamSpec("choice", choices=("bic", "gprior"),
                           doc="model evidence: BIC, or the exact small-sample Zellner g-prior Bayes factor (g = n)"),
     "pool_equivalent": ParamSpec("bool", doc="stop and report credence on the posterior mass of hypotheses "
@@ -70,7 +72,7 @@ class GenomeError(ValueError):
 
 
 LATER_DEFAULTS = {"freq_penalty": False, "construct": False, "construct_max_size": 3, "construct_holdout": 6,
-                  "pool_equivalent": False, "evidence": "bic"}
+                  "pool_equivalent": False, "evidence": "bic", "gate_capabilities": False}
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,7 @@ class Genome:
     construct_holdout: int = 6
     pool_equivalent: bool = False
     evidence: str = "bic"
+    gate_capabilities: bool = False
     min_hypotheses: int = 3
     research_depth: int = 1
     verification: str = "independent"
