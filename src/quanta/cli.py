@@ -57,7 +57,14 @@ def cmd_solve(args) -> int:
     run_dir = Path(args.run_dir)
     loop = ResearchLoop(args.problem, run_dir=run_dir, **_loop_kwargs(args, run_dir))
     print(f"run {loop.state.run_id} in {run_dir} (create {run_dir / 'STOP'} to halt)", file=sys.stderr)
-    report = loop.run()
+    return _finish(loop, loop.run())
+
+
+def _finish(loop, report: Path) -> int:
+    if loop.paused:
+        print(f"paused ({loop.state.stop_reason}); remove {loop.run_dir / 'STOP'} and run "
+              f"`quanta resume {loop.run_dir}` to continue", file=sys.stderr)
+        return 3
     print(report.read_text())
     return 0
 
@@ -66,8 +73,7 @@ def cmd_resume(args) -> int:
     from .solver import ResearchLoop
     run_dir = Path(args.run_dir)
     loop = ResearchLoop.resume(run_dir, **_loop_kwargs(args, run_dir))
-    print(loop.run().read_text())
-    return 0
+    return _finish(loop, loop.run())
 
 
 def cmd_discover(args) -> int:

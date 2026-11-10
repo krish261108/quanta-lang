@@ -34,7 +34,7 @@ from pathlib import Path
 from .agent import ROLE_TOOLS, AgentFactory, READ_TOOLS, submit_tool
 from .epistemics import Ledger, Status
 from .genome import Genome
-from .governance import AuditLog, Budget, GovernanceError, Governor, KillSwitch
+from .governance import AuditLog, Budget, GovernanceError, Governor, KillSwitch, KillSwitchTripped
 from .llm import Model
 from .memory import MemoryStore
 from .planning import PlanError, TaskGraph, TaskStatus
@@ -77,6 +77,22 @@ class RunState:
     @classmethod
     def load(cls, path: Path) -> "RunState":
         return cls(**json.loads(path.read_text(encoding="utf-8")))
+
+
+class _PauseOnStop:
+    """An agent whose run raises when it was cut short by an operator stop, so that the
+    phase it belongs to is repeated on resume instead of recording a half-finished result.
+    (Budget exhaustion is different: the run then winds down and delivers what it has.)"""
+
+    def __init__(self, agent, governor: Governor) -> None:
+        self._agent = agent
+        self._governor = governor
+
+    def run(self, *args, **kwargs):
+        res = self._agent.run(*args, **kwargs)
+        if res.stop_reason.startswith("halted") and self._governor.kill_switch.is_tripped():
+            raise KillSwitchTripped(self._governor.kill_switch.reason or "kill switch tripped")
+        return res
 
 
 def independently_verified(ledger: Ledger, claim) -> bool:
@@ -143,8 +159,14 @@ class ResearchLoop:
     def _agent(self, role: str, submit, *, max_steps: int = 25, tool_names=None, system_extra: str = ""):
         note = self.genome.phase_note(self.state.phase)
         extra = "\n".join(x for x in (system_extra, note) if x)
-        return self.factory.create(role, self.ctx, submit=submit, max_steps=max_steps,
-                                   effort=self.genome.main_effort, system_extra=extra, tool_names=tool_names)
+        return _PauseOnStop(self.factory.create(role, self.ctx, submit=submit, max_steps=max_steps,
+                                                effort=self.genome.main_effort, system_extra=extra,
+                                                tool_names=tool_names), self.governor)
+
+    def _check_stop(self) -> None:
+        """Raise if an operator stop arrived (phases call this after work they did not run through `_agent`)."""
+        if self.governor.kill_switch.is_tripped():
+            raise KillSwitchTripped(self.governor.kill_switch.reason or "kill switch tripped")
 
     def _brief(self, *, ledger_items: int = 25) -> str:
         st = self.state
@@ -169,11 +191,25 @@ class ResearchLoop:
         return "\n\n".join(parts)
 
     # -- main loop ---------------------------------------------------------------
+    @property
+    def paused(self) -> bool:
+        return (not self.state.done) and self.state.stop_reason.startswith("paused")
+
     def run(self) -> Path:
+        if self.paused:                                   # resuming after an operator stop
+            self._log(phase=self.state.phase, event="resumed", reason=self.state.stop_reason)
+            self.state.stop_reason = ""
         while not self.state.done:
             phase = self.state.phase
             try:
                 getattr(self, f"_phase_{phase}")()
+            except KillSwitchTripped as e:
+                # An operator stop is a pause, not an end: keep the phase, checkpoint, and let
+                # `quanta resume` continue from here once the stop file is removed.
+                self.state.stop_reason = f"paused: {e}"
+                self._log(phase=phase, event="paused", reason=str(e))
+                self._checkpoint()
+                return self.run_dir / "report.md"
             except GovernanceError as e:
                 self.state.stop_reason = f"halted: {e}"
                 self._log(phase=phase, event="halted", reason=str(e))
@@ -352,7 +388,7 @@ class ResearchLoop:
                                "subtasks": {"type": "array", "items": subtask}},
                            ["success", "summary"], validate)
         ctx = self.ctx.child(f"task:{task.id}/{task.role}", self.governor.child(0.25))
-        agent = self.factory.create(task.role, ctx, submit=tool, max_steps=30)
+        agent = _PauseOnStop(self.factory.create(task.role, ctx, submit=tool, max_steps=30), self.governor)
         deps = "\n".join(f"- {d}: {results.get(d, '')[:600]}" for d in task.deps)
         retry = ("\n\nPrevious attempts failed:\n" + "\n".join(f"- {e}" for e in task.errors)
                  + "\nUse a different approach.") if task.errors else ""
@@ -463,6 +499,7 @@ class ResearchLoop:
         claims = [self.ledger.get(leader["claim_id"]), *candidates]
         ctx = self.ctx.child("verifier", self.governor.child(0.3))
         summary, _ = verify.review(self.verifier_factory, ctx, claims, mode=mode)
+        self._check_stop()                      # a verifier cut short by an operator stop is not a verdict
         self.state.verification.append({"iteration": self.state.iteration, "mode": mode, **summary})
         self._log(phase="verify", **{k: v for k, v in summary.items() if k != "error"})
         if leader["claim_id"] in summary.get("refuted", []):
