@@ -256,3 +256,29 @@ def test_anthropic_request_shape():
     # pause_turn: the partial assistant turn is appended and the request resent
     assert sent[1]["messages"][-1]["role"] == "assistant"
     assert r.text == "hihi" and r.usage.input_tokens == 20 and r.cost_usd > 0
+
+
+def test_operator_stop_pauses_and_resume_continues(tmp_path):
+    run_dir = tmp_path / "run"
+    stop = run_dir / "STOP"
+    run_dir.mkdir()
+    gov = Governor(kill_switch=KillSwitch(stop), audit=AuditLog(run_dir / "audit.jsonl"))
+    calls = {"n": 0}
+
+    def brain(system, messages, tools):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            stop.touch()                                     # operator stops the run mid-way
+        return research_brain(system, messages, tools)
+
+    loop = ResearchLoop("What is x, where x is defined as 2+2?", model=ScriptedModel(brain), run_dir=run_dir,
+                        governor=gov, genome=Genome(delegate=False, research_depth=0))
+    loop.run()
+    assert loop.paused and not loop.state.done
+    paused_phase = loop.state.phase
+    stop.unlink()
+    resumed = ResearchLoop.resume(run_dir, model=ScriptedModel(research_brain), genome=Genome(delegate=False),
+                                  governor=Governor(kill_switch=KillSwitch(stop), audit=AuditLog(run_dir / "audit.jsonl")))
+    assert resumed.state.phase == paused_phase
+    resumed.run()
+    assert resumed.state.done and resumed.state.result["answer"] == "x = 4"

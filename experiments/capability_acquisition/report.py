@@ -44,6 +44,25 @@ KNOWN_LOOP_DEFECTS = [
     "with starting values removed (C2noinit), library parameters get a single start, so F3 also measures "
     "the lack of a multi-start, not only memorized values",
 ]
+KNOWN_EVALUATOR_LIMITS = [
+    "workers can recover their task's identity (the task identifier names split and index; the solver seed "
+    "is an invertible function of the task seed), so a malicious worker that imported the evaluator could "
+    "regenerate the hidden law; the solver and the artifacts never do this",
+    "the leakage gate checks the seeds the proposer's service object recorded for train/validation, and "
+    "the same object could evaluate any split; the loop only ever calls the train and validation methods "
+    "(audited from the evaluation logs, see the replay audit)",
+    "the reviewer's validation gate trusts the validation record id it is given (held-out and transfer "
+    "gates are recomputed on fresh blocks regardless)",
+    "the parameter-index invariant of the code policy is checked with a regex, so AST-equivalent spellings "
+    "such as p[(5)] pass; the loop only emits plain indices",
+    "replayed runs reuse earlier record files after a seed check without recomputing them (audited by "
+    "recomputing samples, see the replay audit)",
+    "percentile-bootstrap lower bounds are mildly anti-conservative for left-skewed per-task differences; "
+    "the reviewer estimated the family-wise false-ACTIVE probability for a useless capability at 0.7% "
+    "(symmetric noise) to about 4% (rare large losses) over 12 reviews",
+    "about 1.4% of tasks are constant laws whose grading scale is floating-point residue, so they are "
+    "graded on rounding noise (symmetric across conditions)",
+]
 
 
 def load(path: Path):
@@ -205,6 +224,10 @@ def main() -> int:
               "These belong to the pre-registered acquisition loop, so the registered runs keep them; most of "
               "them make the loop weaker, not stronger. They are fixed in the next version of the loop.", ""]
     lines += [f"* {d}" for d in KNOWN_LOOP_DEFECTS]
+    lines += ["", "## Known limits of the evaluator (found by independent review)", "",
+              "None is exploited by the registered pipeline; each weakens a guarantee that the code alone "
+              "does not enforce. Fixes are scheduled for the next version.", ""]
+    lines += [f"* {d}" for d in KNOWN_EVALUATOR_LIMITS]
     (HERE / "RESULTS.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0
