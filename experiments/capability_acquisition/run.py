@@ -141,8 +141,17 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
     d.mkdir(parents=True, exist_ok=True)
     if stale is not None and (stale / "evals").exists():
         import shutil
-        shutil.copytree(stale / "evals", d / "evals", dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("train-*", "*-rerun.jsonl"))
+        (d / "evals").mkdir(exist_ok=True)
+        skipped = []
+        for f in sorted((stale / "evals").glob("*.jsonl")):
+            if f.name.startswith("train-") or f.name.endswith("-rerun.jsonl"):
+                continue
+            if _parses(f):                      # a file cut off by the interruption is re-evaluated
+                shutil.copyfile(f, d / "evals" / f.name)
+            else:
+                skipped.append(f.name)
+        if skipped:
+            log(f"{name}: not reusing {len(skipped)} unreadable record file(s): {skipped}")
     service = EvaluationService(d / "evals", replication=rep, workers=workers)
     reviewer = Reviewer(service, d / "reviewer", workers=workers, first_block=FIRST_BLOCK[name])
     registry = Registry(d / "registry.jsonl")
@@ -173,11 +182,26 @@ def phase_acquire(out: Path, rep: int, workers: int, *, control: bool) -> dict:
     return summary
 
 
+def _parses(path: Path) -> bool:
+    """Is every line of a JSON-lines file complete and decodable?"""
+    try:
+        text = path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.strip():
+                json.loads(line)
+    except (ValueError, OSError):
+        return False
+    return text == "" or text.endswith("\n")
+
+
 def _decisions(events_path: Path) -> list[tuple]:
     keep = ("design", "implement", "validate", "review", "retry")
     out = []
     for line in events_path.read_text(encoding="utf-8").splitlines():
-        e = json.loads(line)
+        try:
+            e = json.loads(line)
+        except ValueError:                      # a line cut off by an interruption
+            continue
         if e["event"] in keep:
             out.append((e["event"], e.get("capability"), e.get("structure"), e.get("approved"),
                         e.get("mean_delta"), e.get("sha256"),
@@ -245,11 +269,25 @@ def phase_final(out: Path, rep: int, workers: int) -> dict:
         if skipped:
             dump_json(d / f"{s}.skipped.json", skipped)
     done: dict = defaultdict(dict)
+    hashes = {c: config_hash(v) for c, v in conds.items()}
+    copies: dict = defaultdict(dict)
     for cname, config in conds.items():
         for split in list(FINAL_SPLITS) + ["external"]:
             path = d / cname / f"{split}.jsonl"
             if path.exists():
                 done[cname][split] = len(read_jsonl(path))
+                continue
+            # Evaluation is deterministic in (configuration, tasks): a condition whose
+            # configuration is identical to one already evaluated gets a copy of its records.
+            twin = next((o for o in conds if o != cname and hashes[o] == hashes[cname]
+                         and (d / o / f"{split}.jsonl").exists()), None)
+            if twin is not None:
+                import shutil
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(d / twin / f"{split}.jsonl", path)
+                done[cname][split] = len(read_jsonl(path))
+                copies[cname][split] = twin
+                log(f"final {cname} {split}: identical configuration to {twin}; records copied")
                 continue
             t0 = time.time()
             if split == "external":
@@ -260,7 +298,7 @@ def phase_final(out: Path, rep: int, workers: int) -> dict:
             write_jsonl(path, recs)
             done[cname][split] = len(recs)
             log(f"final {cname} {split}: {len(recs)} tasks in {time.time() - t0:.0f}s")
-    summary = {"conditions": list(conds), "config_hashes": {k: config_hash(v) for k, v in conds.items()},
+    summary = {"conditions": list(conds), "config_hashes": hashes, "copied_from_identical_configuration": copies,
                "provenance": provenance(),
                "n": done, "skipped": {s: len(v[1]) for s, v in task_lists.items()},
                "capabilities": {k: [a["capability_id"] for a in v["capabilities"]] for k, v in conds.items()}}
@@ -486,17 +524,45 @@ def phase_analyze(out: Path, rep: int) -> dict:
     return res
 
 
+def code_fingerprint() -> str:
+    """sha256 over the source of everything a replication's results depend on (the solver,
+    the capability code and the evaluator), so that one replication is never produced by
+    two code versions. The runner itself is excluded."""
+    import hashlib
+    pkg = ROOT / "src" / "quanta"
+    files = sorted([*pkg.glob("science/*.py"), *pkg.glob("capabilities/*.py"), *pkg.glob("bench/*.py"),
+                    *(pkg / n for n in ("__init__.py", "genome.py", "epistemics.py", "stats.py", "memory.py",
+                                        "uncertainty.py"))])
+    h = hashlib.sha256()
+    for f in files:
+        h.update(str(f.relative_to(pkg)).encode() + b"\0" + f.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--replication", type=int, default=0)
     ap.add_argument("--phase", default="all", choices=["all", "acquire", "random", "final", "fresh", "analyze"])
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--allow-code-change", action="store_true",
+                    help="continue a replication although the code differs from the version that started it")
     args = ap.parse_args()
     rep = args.replication
     out = Path(args.out) if args.out else HERE / "results" / f"rep{rep}"
     out.mkdir(parents=True, exist_ok=True)
     meta = out / "run_meta.json"
+    fingerprint = code_fingerprint()
+    if meta.exists():
+        m = json.loads(meta.read_text())
+        if m.get("code_fingerprint") is None:
+            m["code_fingerprint"] = fingerprint
+            m["code_fingerprint_note"] = "recorded when the fingerprint check was introduced"
+            dump_json(meta, m)
+        elif m["code_fingerprint"] != fingerprint and not args.allow_code_change:
+            sys.exit(f"{meta}: this replication was produced by a different code version "
+                     f"(fingerprint {m['code_fingerprint'][:12]}, now {fingerprint[:12]}). Run it from that "
+                     f"version, or pass --allow-code-change and record the deviation.")
     if not meta.exists():
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
         dirty = subprocess.run(["git", "status", "--porcelain", "src"], cwd=ROOT, capture_output=True,
@@ -505,7 +571,7 @@ def main() -> int:
                          "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "gates_sha": GATES_SHA,
                          "gates": GATES, "s0": S0.to_dict(), "settings": asdict(SETTINGS),
                          "first_block": FIRST_BLOCK, "final_splits": FINAL_SPLITS, "seed": SEED,
-                         "workers": args.workers})
+                         "workers": args.workers, "code_fingerprint": fingerprint})
     phases = ["acquire", "random", "final", "fresh", "analyze"] if args.phase == "all" else [args.phase]
     for ph in phases:
         log(f"phase {ph} (replication {rep})")
