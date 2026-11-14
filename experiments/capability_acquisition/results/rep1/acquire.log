@@ -1,0 +1,5 @@
+2026-11-06 13:49:16 phase acquire (replication 1)
+2026-11-06 16:34:04 phase acquire (replication 1)
+2026-11-06 16:34:04 acquire: previous attempt was interrupted; kept it at acquire.interrupted-1793982844 and replaying
+2026-11-06 17:03:34 acquire: active=[]
+2026-11-06 17:03:34 phase acquire done in 1770s

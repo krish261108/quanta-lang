@@ -1,0 +1,167 @@
+{
+ "review_id": "review-r0-b4-264c0b3a59",
+ "approved": true,
+ "gates": {
+  "integrity": {
+   "passed": true,
+   "value": {
+    "hash": true,
+    "policy": true,
+    "only_this_artifact_added": true
+   },
+   "threshold": "all true"
+  },
+  "unit_tests": {
+   "passed": true,
+   "value": {
+    "recovery": 1.0,
+    "finite": true,
+    "deterministic": true,
+    "runtime_s": 0.0141
+   },
+   "threshold": "passed"
+  },
+  "no_leakage": {
+   "passed": true,
+   "value": {
+    "seeds_outside_train_validation": 0
+   },
+   "threshold": 0
+  },
+  "validation": {
+   "passed": true,
+   "value": {
+    "n": 800,
+    "mean_delta": 0.01398,
+    "ci_low": 0.00463,
+    "ci_high": 0.02308,
+    "wins": 294,
+    "losses": 283,
+    "recovered_base": 0.54,
+    "recovered_cand": 0.5625
+   },
+   "threshold": "ci_low > 0.0"
+  },
+  "heldout": {
+   "passed": true,
+   "value": {
+    "n": 1200,
+    "mean_delta": 0.01234,
+    "ci_low": 0.00478,
+    "ci_high": 0.02013,
+    "wins": 411,
+    "losses": 428,
+    "recovered_base": 0.5533333333333333,
+    "recovered_cand": 0.5825
+   },
+   "threshold": "ci_low > 0.0"
+  },
+  "familiar_regression": {
+   "passed": true,
+   "value": {
+    "n": 714,
+    "mean_delta": 0.00028,
+    "ci_low": -0.00775,
+    "ci_high": 0.00848,
+    "wins": 220,
+    "losses": 299,
+    "recovered_base": 0.8305322128851541,
+    "recovered_cand": 0.84593837535014
+   },
+   "threshold": "ci_low > -0.01"
+  },
+  "transfer": {
+   "passed": true,
+   "value": {
+    "n": 400,
+    "mean_delta": 0.01802,
+    "ci_low": 0.00486,
+    "ci_high": 0.03169,
+    "wins": 194,
+    "losses": 99,
+    "recovered_base": 0.085,
+    "recovered_cand": 0.14
+   },
+   "threshold": "ci_low > 0.0"
+  },
+  "reproducible": {
+   "passed": true,
+   "value": {
+    "identical_per_task_scores": true,
+    "n": 200
+   },
+   "threshold": true
+  }
+ },
+ "reasons": [
+  "all gates passed"
+ ],
+ "artifact_sha": "264c0b3a59615b0d7b5686f87c3db836aaad90d87c0a94ac7f3cb3d3ed43153e",
+ "gates_sha": "382291693813242296a15edba96555b6c359824e525909a76497bf3203e92f06",
+ "block": 4,
+ "seconds": 70.2,
+ "recomputed": {
+  "validation": {
+   "n": 800,
+   "mean_delta": 0.01398,
+   "ci_low": 0.00463,
+   "ci_high": 0.02308,
+   "wins": 294,
+   "losses": 283,
+   "recovered_base": 0.54,
+   "recovered_cand": 0.5625
+  },
+  "heldout": {
+   "n": 1200,
+   "mean_delta": 0.01234,
+   "ci_low": 0.00478,
+   "ci_high": 0.02013,
+   "wins": 411,
+   "losses": 428,
+   "recovered_base": 0.5533333333333333,
+   "recovered_cand": 0.5825
+  },
+  "familiar": {
+   "n": 714,
+   "mean_delta": 0.00028,
+   "ci_low": -0.00775,
+   "ci_high": 0.00848,
+   "wins": 220,
+   "losses": 299,
+   "recovered_base": 0.8305322128851541,
+   "recovered_cand": 0.84593837535014
+  },
+  "transfer": {
+   "n": 400,
+   "mean_delta": 0.01802,
+   "ci_low": 0.00486,
+   "ci_high": 0.03169,
+   "wins": 194,
+   "losses": 99,
+   "recovered_base": 0.085,
+   "recovered_cand": 0.14
+  },
+  "heldout_by_kind": {
+   "familiar": {
+    "n": 714,
+    "mean_delta": 0.00028,
+    "ci_low": -0.00775,
+    "ci_high": 0.00848,
+    "wins": 220,
+    "losses": 299,
+    "recovered_base": 0.8305322128851541,
+    "recovered_cand": 0.84593837535014
+   },
+   "gap": {
+    "n": 486,
+    "mean_delta": 0.03006,
+    "ci_low": 0.0161,
+    "ci_high": 0.04422,
+    "wins": 191,
+    "losses": 129,
+    "recovered_base": 0.14609053497942387,
+    "recovered_cand": 0.19547325102880658
+   }
+  }
+ }
+}

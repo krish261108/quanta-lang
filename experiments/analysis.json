@@ -1,0 +1,442 @@
+{
+ "initial": "4b3aedaa9a43",
+ "final": "73a490250f5e",
+ "diff": {
+  "likelihood": [
+   "gaussian",
+   "student_t"
+  ],
+  "falsification_rounds": [
+   0,
+   2
+  ]
+ },
+ "test": {
+  "mean_base": 0.7225,
+  "mean_cand": 0.7618,
+  "delta": 0.0393,
+  "ci": [
+   0.025,
+   0.0539
+  ],
+  "wins": 157,
+  "losses": 243,
+  "sign_p": 1.995805429650304e-05
+ },
+ "test_diagnostics": {
+  "initial": {
+   "n": 400,
+   "mean_score": 0.7225196185221074,
+   "accuracy": 0.71,
+   "mean_credence": 0.8970621616708914,
+   "brier": 0.24372880660961516,
+   "ece": 0.24215849261138161,
+   "overconfident_error_rate": 0.215,
+   "underconfident_correct_rate": 0.0075,
+   "mean_cost": 0.5582500000000024,
+   "mean_nrmse": 0.8010757803478783,
+   "budget_exhausted_rate": 0.3225,
+   "accuracy_by_category": {
+    "clean": 0.844,
+    "outliers": 0.7684210526315789,
+    "outside-initial-space": 0.0
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "top_confusions": [
+    [
+     "none->sinusoid",
+     28
+    ],
+    [
+     "constant->step",
+     23
+    ],
+    [
+     "quadratic->cubic",
+     11
+    ],
+    [
+     "linear->cubic",
+     6
+    ],
+    [
+     "exponential->cubic",
+     5
+    ],
+    [
+     "linear_sin->cubic",
+     5
+    ]
+   ],
+   "ask_rate": 0.04
+  },
+  "final": {
+   "n": 400,
+   "mean_score": 0.7617890797279895,
+   "accuracy": 0.7525,
+   "mean_credence": 0.8863129463174194,
+   "brier": 0.1889892328693812,
+   "ece": 0.17703726760833766,
+   "overconfident_error_rate": 0.1475,
+   "underconfident_correct_rate": 0.01,
+   "mean_cost": 0.6470833333333345,
+   "mean_nrmse": 0.7124708036555291,
+   "budget_exhausted_rate": 0.3925,
+   "accuracy_by_category": {
+    "clean": 0.88,
+    "outliers": 0.8526315789473684,
+    "outside-initial-space": 0.0
+   },
+   "count_by_category": {
+    "clean": 250,
+    "outliers": 95,
+    "outside-initial-space": 55
+   },
+   "top_confusions": [
+    [
+     "none->sinusoid",
+     28
+    ],
+    [
+     "constant->step",
+     23
+    ],
+    [
+     "linear->quadratic",
+     7
+    ],
+    [
+     "linear_sin->cubic",
+     5
+    ],
+    [
+     "quadratic->cubic",
+     5
+    ],
+    [
+     "none->step",
+     4
+    ]
+   ],
+   "ask_rate": 0.04
+  }
+ },
+ "ablations": {
+  "likelihood: student_t -> gaussian": {
+   "mean_base": 0.7618,
+   "mean_cand": 0.7517,
+   "delta": -0.0101,
+   "ci": [
+    -0.0199,
+    -0.0001
+   ],
+   "wins": 190,
+   "losses": 210,
+   "sign_p": 0.34212239608405104
+  },
+  "falsification_rounds: 2 -> 0": {
+   "mean_base": 0.7618,
+   "mean_cand": 0.7272,
+   "delta": -0.0346,
+   "ci": [
+    -0.0488,
+    -0.0207
+   ],
+   "wins": 200,
+   "losses": 81,
+   "sign_p": 8.821811956756314e-13
+  }
+ },
+ "random_search_control": {
+  "adopted": [
+   {
+    "version": 1,
+    "candidate": "g1c1",
+    "generation": 1,
+    "changes": {
+     "falsification_rounds": [
+      0,
+      1
+     ]
+    },
+    "rationale": "exploration: random local change to falsification_rounds",
+    "selection_delta": 0.022984054331705535,
+    "confirmation_delta": 0.01117269354104502,
+    "confirmation_ci": [
+     0.001526255347175538,
+     0.023755527824426515
+    ]
+   },
+   {
+    "version": 2,
+    "candidate": "g3c3",
+    "generation": 3,
+    "changes": {
+     "use_learned_priors": [
+      false,
+      true
+     ]
+    },
+    "rationale": "exploration: random local change to use_learned_priors",
+    "selection_delta": 0.004233734309939085,
+    "confirmation_delta": 0.005112501228449074,
+    "confirmation_ci": [
+     0.00046423415966483685,
+     0.010887459439342563
+    ]
+   }
+  ],
+  "generations_run": 6,
+  "stop_reason": "diminishing returns: no confirmed improvement in 3 consecutive generations",
+  "test_vs_initial": {
+   "mean_base": 0.7225,
+   "mean_cand": 0.7482,
+   "delta": 0.0257,
+   "ci": [
+    0.0154,
+    0.0368
+   ],
+   "wins": 156,
+   "losses": 195,
+   "sign_p": 0.042377427701638916
+  },
+  "diagnostic_final_vs_random_final": {
+   "mean_base": 0.7482,
+   "mean_cand": 0.7618,
+   "delta": 0.0136,
+   "ci": [
+    0.0041,
+    0.0231
+   ],
+   "wins": 147,
+   "losses": 253,
+   "sign_p": 1.2932336997658723e-07
+  }
+ },
+ "null_check": {
+  "accept": false,
+  "reasons": [
+   "CI lower bound +0.0000 does not exceed +0.0000"
+  ],
+  "n": 120,
+  "mean_delta": 0.0,
+  "ci_low": 0.0,
+  "ci_high": 0.0,
+  "wins": 0,
+  "losses": 0,
+  "ties": 120,
+  "sign_p": 1.0,
+  "confidence": 0.95
+ },
+ "reliability": {
+  "initial": [
+   {
+    "bin": [
+     0.2,
+     0.4
+    ],
+    "n": 4,
+    "mean_confidence": 0.329,
+    "accuracy": 0.0
+   },
+   {
+    "bin": [
+     0.4,
+     0.6
+    ],
+    "n": 29,
+    "mean_confidence": 0.513,
+    "accuracy": 0.414
+   },
+   {
+    "bin": [
+     0.6,
+     0.8
+    ],
+    "n": 40,
+    "mean_confidence": 0.717,
+    "accuracy": 0.775
+   },
+   {
+    "bin": [
+     0.8,
+     1.0
+    ],
+    "n": 327,
+    "mean_confidence": 0.96,
+    "accuracy": 0.737
+   }
+  ],
+  "final": [
+   {
+    "bin": [
+     0.2,
+     0.4
+    ],
+    "n": 5,
+    "mean_confidence": 0.367,
+    "accuracy": 0.2
+   },
+   {
+    "bin": [
+     0.4,
+     0.6
+    ],
+    "n": 27,
+    "mean_confidence": 0.517,
+    "accuracy": 0.259
+   },
+   {
+    "bin": [
+     0.6,
+     0.8
+    ],
+    "n": 67,
+    "mean_confidence": 0.721,
+    "accuracy": 0.761
+   },
+   {
+    "bin": [
+     0.8,
+     1.0
+    ],
+    "n": 301,
+    "mean_confidence": 0.965,
+    "accuracy": 0.804
+   }
+  ]
+ },
+ "learning_curve": [
+  {
+   "experience": 0,
+   "mean_score": 0.7618,
+   "accuracy": 0.7525,
+   "vs_no_memory": {
+    "mean_base": 0.7618,
+    "mean_cand": 0.7618,
+    "delta": 0.0,
+    "ci": [
+     0.0,
+     0.0
+    ],
+    "wins": 0,
+    "losses": 0,
+    "sign_p": 1.0
+   }
+  },
+  {
+   "experience": 10,
+   "mean_score": 0.7561,
+   "accuracy": 0.7525,
+   "vs_no_memory": {
+    "mean_base": 0.7618,
+    "mean_cand": 0.7561,
+    "delta": -0.0056,
+    "ci": [
+     -0.011,
+     -0.0005
+    ],
+    "wins": 128,
+    "losses": 154,
+    "sign_p": 0.13641809058006046
+   }
+  },
+  {
+   "experience": 30,
+   "mean_score": 0.7562,
+   "accuracy": 0.755,
+   "vs_no_memory": {
+    "mean_base": 0.7618,
+    "mean_cand": 0.7562,
+    "delta": -0.0056,
+    "ci": [
+     -0.0112,
+     -0.0006
+    ],
+    "wins": 125,
+    "losses": 158,
+    "sign_p": 0.05695265530067515
+   }
+  },
+  {
+   "experience": 100,
+   "mean_score": 0.7711,
+   "accuracy": 0.765,
+   "vs_no_memory": {
+    "mean_base": 0.7618,
+    "mean_cand": 0.7711,
+    "delta": 0.0093,
+    "ci": [
+     0.0048,
+     0.0145
+    ],
+    "wins": 230,
+    "losses": 60,
+    "sign_p": 1.2657007643588786e-24
+   }
+  },
+  {
+   "experience": 300,
+   "mean_score": 0.77,
+   "accuracy": 0.77,
+   "vs_no_memory": {
+    "mean_base": 0.7618,
+    "mean_cand": 0.77,
+    "delta": 0.0082,
+    "ci": [
+     0.0019,
+     0.015
+    ],
+    "wins": 214,
+    "losses": 81,
+    "sign_p": 5.217626071022791e-15
+   }
+  }
+ ],
+ "summary_from_run": {
+  "adopted": [
+   {
+    "version": 1,
+    "candidate": "g1c1",
+    "generation": 1,
+    "changes": {
+     "falsification_rounds": [
+      0,
+      2
+     ]
+    },
+    "rationale": "16% of answers were confidently wrong: test the leading hypothesis adversarially before accepting it",
+    "selection_delta": 0.025864935069242943,
+    "confirmation_delta": 0.016546363523990037,
+    "confirmation_ci": [
+     0.00433368083776241,
+     0.031488738654419784
+    ]
+   },
+   {
+    "version": 2,
+    "candidate": "g2c5",
+    "generation": 2,
+    "changes": {
+     "likelihood": [
+      "gaussian",
+      "student_t"
+     ]
+    },
+    "rationale": "accuracy with corrupted measurements (0.83) trails clean data (0.94): use a heavy-tailed noise model",
+    "selection_delta": 0.013576375497013042,
+    "confirmation_delta": 0.013420849117685303,
+    "confirmation_ci": [
+     0.0012982242232146362,
+     0.02551962464412094
+    ]
+   }
+  ],
+  "stop_reason": "diminishing returns: no confirmed improvement in 3 consecutive generations",
+  "generations_run": 5
+ }
+}

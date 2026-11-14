@@ -1,0 +1,97 @@
+{
+ "git_commit": "d02f62ec18696e3366916f1e5a6617d7e287cbe9",
+ "recorded": {
+  "initial": {
+   "mean_score": 0.7225196185221074,
+   "accuracy": 0.71
+  },
+  "final": {
+   "mean_score": 0.7617890797279895,
+   "accuracy": 0.7525
+  },
+  "delta": 0.03926946120588175
+ },
+ "recomputed": {
+  "initial": {
+   "mean_score": 0.7558,
+   "accuracy": 0.7375,
+   "brier": 0.2171,
+   "ece": 0.1924,
+   "overconfident_error_rate": 0.1725,
+   "mean_cost": 0.5841,
+   "accuracy_by_category": {
+    "clean": 0.876,
+    "outliers": 0.8,
+    "outside-initial-space": 0.0
+   }
+  },
+  "final": {
+   "mean_score": 0.7976,
+   "accuracy": 0.785,
+   "brier": 0.1605,
+   "ece": 0.1325,
+   "overconfident_error_rate": 0.1,
+   "mean_cost": 0.6647,
+   "accuracy_by_category": {
+    "clean": 0.908,
+    "outliers": 0.9157894736842105,
+    "outside-initial-space": 0.0
+   }
+  },
+  "final, likelihood reverted to gaussian": {
+   "mean_score": 0.7869,
+   "accuracy": 0.775,
+   "brier": 0.1702,
+   "ece": 0.1211,
+   "overconfident_error_rate": 0.11,
+   "mean_cost": 0.6794,
+   "accuracy_by_category": {
+    "clean": 0.92,
+    "outliers": 0.8421052631578947,
+    "outside-initial-space": 0.0
+   }
+  },
+  "final, falsification_rounds reverted to 0": {
+   "mean_score": 0.7584,
+   "accuracy": 0.7425,
+   "brier": 0.2178,
+   "ece": 0.2014,
+   "overconfident_error_rate": 0.175,
+   "mean_cost": 0.5581,
+   "accuracy_by_category": {
+    "clean": 0.864,
+    "outliers": 0.8526315789473684,
+    "outside-initial-space": 0.0
+   }
+  }
+ },
+ "final_vs_initial": {
+  "mean_delta": 0.04184,
+  "ci": [
+   0.02739,
+   0.0566
+  ],
+  "wins": 166,
+  "losses": 234
+ },
+ "ablations_vs_final": {
+  "final, likelihood reverted to gaussian": {
+   "mean_delta": -0.01075,
+   "ci": [
+    -0.02121,
+    -0.00013
+   ],
+   "wins": 188,
+   "losses": 212
+  },
+  "final, falsification_rounds reverted to 0": {
+   "mean_delta": -0.03919,
+   "ci": [
+    -0.05403,
+    -0.02497
+   ],
+   "wins": 180,
+   "losses": 85
+  }
+ }
+}

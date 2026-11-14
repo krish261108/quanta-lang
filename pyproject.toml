@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quanta"
+version = "0.1.0"
+description = "A governed, self-improving research-and-engineering agent harness."
+readme = "README.md"
+requires-python = ">=3.10"
+# The core (science engine, ledger, memory, planning, governance, self-improver,
+# benchmark) is pure standard library. The LLM backend is optional.
+dependencies = []
+
+[project.optional-dependencies]
+llm = ["anthropic>=1.0"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+quanta = "quanta.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
